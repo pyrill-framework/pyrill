@@ -1,5 +1,5 @@
 from asyncio import AbstractEventLoop, Future, ensure_future, get_event_loop
-from typing import Iterable, Iterator, TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Iterator
 
 if TYPE_CHECKING:
     from .base import BaseSink
