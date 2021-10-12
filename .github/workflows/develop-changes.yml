@@ -1,0 +1,28 @@
+name: Publish development packages
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  build-package:
+    name: Build and publish package
+    runs-on: ubuntu-latest
+
+    env:
+      PACKAGE_DEVELOPMENT: ${{ github.run_number }}
+      PYPI_REPO_USERNAME: __token__
+      PYPI_REPO_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - name: Install building requirements
+        run: make requirements-package
+
+      - name: Build and Publish package - artifactory
+        run: make publish
