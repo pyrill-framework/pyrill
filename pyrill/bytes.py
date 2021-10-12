@@ -4,6 +4,10 @@ from .chunks import (BaseChunksFirstSeparatorProducer,
                      BaseDataAccumulatorProducer, BaseSizedChunksProducer)
 from .mappers import make_map
 
+__all__ = ['SizedChunksSource', 'ChunksSlowStartSource', 'ChunksSeparatorSource', 'ChunksFirstSeparatorSource',
+           'SizedChunks', 'ChunksSlowStart', 'ChunksSeparator', 'ChunksFirstSeparator', 'Decode',
+           'UnicodeChunks']
+
 
 class BytesChunksMixin:
     @classmethod

@@ -3,6 +3,8 @@ from typing import Any, Awaitable, Callable, Dict, Protocol, Union
 
 from .base import BaseStage, FrameSkippedError, Sink_co, Source_co
 
+__all__ = ['BaseMap', 'Map', 'make_map']
+
 
 class BaseMap(BaseStage[Sink_co, Source_co]):
 

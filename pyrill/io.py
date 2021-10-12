@@ -5,6 +5,12 @@ from typing import (IO, AnyStr, Dict, Generic, Iterable, Optional, Protocol,
 
 from .base import BaseSink, BaseSource
 
+__all__ = ['MSG_NEW_FILE', 'MSG_FILE_PATH', 'MSG_FILE_SIZE', 'MSG_START_FILE',
+           'MSG_FILE_READ_START', 'MSG_FILE_READ_END', 'IOSourceMixin', 'IOSinkMixin',
+           'SyncIOSink', 'AsyncIOSink', 'StreamReadSink', 'StreamWriterSource',
+           'ChunkedIOSourceMixin', 'ChunkedSyncIOSource', 'ChunkedAsyncIOSource',
+           'SyncReadLineIOSource', 'AsyncReadLineIOSource', 'FileSource', 'FileSink']
+
 MSG_FILE_SIZE = 'file-size'
 MSG_FILE_PATH = 'file-path'
 MSG_NEW_FILE = 'new-file'

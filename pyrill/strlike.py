@@ -2,6 +2,8 @@ from typing import AnyStr, Iterable, List
 
 from .mappers import make_map
 
+__all__ = ['Split', 'Join', 'Replace', 'Strip', 'RStrip', 'LStrip']
+
 
 @make_map
 def Split(frame: AnyStr, *, sep: AnyStr = None, maxsplit: int = -1, **kwargs) -> List[AnyStr]:
