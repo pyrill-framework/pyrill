@@ -318,8 +318,6 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
                 await self.consume_frame()
 
     async def _inner_consume_all(self):
-        await self.mount()
-
         if self._consumer_fut is None:
             return
 

@@ -16,4 +16,4 @@ from .strings import *  # noqa
 from .strlike import *  # noqa
 from .utils import *  # noqa
 
-__version__ = '0.1.0'
+__version__ = '0.1.1'
