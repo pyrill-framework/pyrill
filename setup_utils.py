@@ -205,7 +205,7 @@ if __name__ == '__main__':
         @cli.command(name='set-development-version')
         @click.option('--commit', '-c',
                       type=str,
-                      required=True,
+                      required=False,
                       help='Commit reference',
                       envvar='PACKAGE_COMMIT')
         @click.option('--build', '-b',

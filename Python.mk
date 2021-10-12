@@ -32,22 +32,24 @@ COVER_MIN_PERCENTAGE=70
 python-help:
 	@echo "Python options"
 	@echo "-----------------------------------------------------------------------"
-	@echo "python-help:             This help"
-	@echo "run-tests:               Run tests with coverage"
-	@echo "clean:                   Clean compiled files"
-	@echo "flake:                   Run Flake8"
-	@echo "prepush:                 Helper to run before to push to repo"
-	@echo "autopep:                 Reformat code using PEP8"
-	@echo "sort-imports:            Sort imports"
-	@echo "beautify:                Reformat code (autopep + sort-imports)"
-	@echo "build:                   Build python package"
-	@echo "publish:                 Publish new version in repository"
-	@echo "requirements:            Install package base requirements"
-	@echo "requirements-dev:        Install development package requirements"
-	@echo "requirements-lint:       Install lint requirements"
-	@echo "requirements-package:    Install requirements in order to build and publish package"
-	@echo "requirements-docs:       Install documentation requirements"
-	@echo "all-requirements:	    Install all requirements"
+	@echo "python-help:             	This help"
+	@echo "run-tests:               	Run tests with coverage"
+	@echo "clean:                   	Clean compiled files"
+	@echo "flake:                   	Run Flake8"
+	@echo "prepush:                 	Helper to run before to push to repo"
+	@echo "autopep:                 	Reformat code using PEP8"
+	@echo "sort-imports:            	Sort imports"
+	@echo "beautify:                	Reformat code (autopep + sort-imports)"
+	@echo "build:                   	Build python package"
+	@echo "publish:                 	Publish new version in repository"
+	@echo "requirements:            	Install package base requirements"
+	@echo "requirements-dev:        	Install development package requirements"
+	@echo "requirements-lint:       	Install lint requirements"
+	@echo "requirements-package:    	Install requirements in order to build and publish package"
+	@echo "requirements-docs:       	Install documentation requirements"
+	@echo "all-requirements:	    	Install all requirements"
+	@echo "get-version:			    	Prints current version"
+	@echo "increase-version.{level}:	Increase version using level which can be 'bugfix', 'minor' or 'major'"
 
 
 # Code recipes
@@ -117,3 +119,10 @@ clean:
 	rm -rf ${PACKAGE_NAME}.egg-info
 	@echo "Cleaning coverage files..."
 	rm -f .coverage
+
+
+increase-version.%:
+	python3 setup_utils.py increase-version --level ${*}
+
+get-version:
+	python3 setup_utils.py get-version

@@ -1,13 +1,10 @@
-name: Increase version
+name: New version
 
 on:
-  workflow_dispatch:
-    inputs:
-      level:
-        description: 'Version level to increase (major, minor or bugfix)'
-        required: true
-        default: 'bugfix'
-
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
   increase_version:
@@ -27,7 +24,7 @@ jobs:
           make requirements-lint
 
       - name: Increase version
-        run: make increase-version.${{ github.event.inputs.level }}
+        run: make increase-version.bugfix
 
       - name: Ensure style
         run: make beautify
