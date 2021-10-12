@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Install development requirements
-        run: make requirements-dev
+        run: make requirements-dev && requirements-lint
 
       - name: Flake
         run: make flake
