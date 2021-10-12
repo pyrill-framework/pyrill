@@ -1,0 +1,48 @@
+name: Increase version
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: 'Version level to increase (major, minor or bugfix)'
+        required: true
+        default: 'bugfix'
+
+
+jobs:
+  increase_version:
+    name: Increase version on develop branch
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          ref: develop
+
+      - name: Install requirements
+        run: |
+          make requirements-package
+          make requirements-lint
+
+      - name: Increase version
+        run: python ./setup_utils.py increase-version --level ${{ github.event.inputs.level }}
+
+      - name: Ensure style
+        run: make beautify
+      - name: Git status
+        run: git status
+
+      - name: Get version
+        id: get-version
+        run: echo "::set-output name=VERSION::$(python ./setup_utils.py get-version)"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v3
+        with:
+          author: ${{ github.actor }} <${{ github.actor }}@users.noreply.github.com>
+          title: "Increase version to ${{ steps.get-version.outputs.VERSION }}"
+          branch: "task/new-version-${{ steps.get-version.outputs.VERSION }}"
+          delete-branch: true
+          commit-message: "Increase version to ${{ steps.get-version.outputs.VERSION }}"
