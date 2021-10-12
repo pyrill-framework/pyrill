@@ -7,7 +7,7 @@ from .base import (BaseIndependentConsumerStage, BaseProducer, BaseSource,
 
 
 class BaseQueue(BaseProducer[Source_co], ABC):
-    _queue: Optional[AsyncQueue[Union[Source_co, BaseException]]] = None
+    _queue: 'Optional[AsyncQueue[Union[Source_co, BaseException]]]' = None
 
     def __init__(self, *args, queue_size: int = 0, **kwargs):
         super(BaseQueue, self).__init__(*args, **kwargs)
