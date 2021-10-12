@@ -9,7 +9,7 @@ class SplitTestCase(IsolatedAsyncioTestCase):
     async def test_success(self):
         source = SyncSource(source=['text to split'])
 
-        stage = Split[str](source=source, sep=' ')
+        stage = Split[str, str](source=source, sep=' ')
 
         result = [t async for t in stage]
 
@@ -18,7 +18,7 @@ class SplitTestCase(IsolatedAsyncioTestCase):
     async def test_success_with_maxsplit(self):
         source = SyncSource(source=['text to split'])
 
-        stage = Split[str](source=source, sep=' ', maxsplit=1)
+        stage = Split[str, str](source=source, sep=' ', maxsplit=1)
 
         result = [t async for t in stage]
 
@@ -27,7 +27,7 @@ class SplitTestCase(IsolatedAsyncioTestCase):
     async def test_fail(self):
         source = SyncSource(source=[1, 'text to split', 2])
 
-        stage = Split[str](source=source, sep=' ', maxsplit=1)
+        stage = Split[str, str](source=source, sep=' ', maxsplit=1)
 
         with self.assertRaises(AttributeError):
             [t async for t in stage]
@@ -38,7 +38,7 @@ class JoinTestCase(IsolatedAsyncioTestCase):
     async def test_success(self):
         source = SyncSource(source=[['text', 'to', 'join']])
 
-        stage = Join[str](source=source, join_str=' ')
+        stage = Join[str, str](source=source, join_str=' ')
 
         i = 0
         async for t in stage:
@@ -52,7 +52,7 @@ class JoinTestCase(IsolatedAsyncioTestCase):
                                     1,
                                     ['text', 'to', 'join']])
 
-        stage = Join[str](source=source, join_str='')
+        stage = Join[str, str](source=source, join_str='')
 
         with self.assertRaises(TypeError):
             [t async for t in stage]
@@ -65,7 +65,7 @@ class ReplaceTestCase(IsolatedAsyncioTestCase):
                                     'text 2 replace to text',
                                     'text 2 replace 2 text'])
 
-        stage = Replace[str](source=source, old='to', new='2')
+        stage = Replace[str, str](source=source, old='to', new='2')
 
         i = 0
         async for t in stage:
@@ -77,7 +77,7 @@ class ReplaceTestCase(IsolatedAsyncioTestCase):
     async def test_success_with_count(self):
         source = SyncSource(source=['text to replace to text'])
 
-        stage = Replace[str](source=source, old='to', new='2', count=1)
+        stage = Replace[str, str](source=source, old='to', new='2', count=1)
 
         i = 0
         async for t in stage:
@@ -93,7 +93,7 @@ class ReplaceTestCase(IsolatedAsyncioTestCase):
                                     2,
                                     'text 2 replace 2 text'])
 
-        stage = Replace[str](source=source, old='to', new='2')
+        stage = Replace[str, str](source=source, old='to', new='2')
 
         with self.assertRaises(AttributeError):
             [t async for t in stage]
@@ -106,7 +106,7 @@ class StripTestCase(IsolatedAsyncioTestCase):
                                     '   \n text to strip   \n    ',
                                     'text to strip'])
 
-        stage = Strip[str](source=source)
+        stage = Strip[str, str](source=source)
 
         i = 0
         async for t in stage:
@@ -119,7 +119,7 @@ class StripTestCase(IsolatedAsyncioTestCase):
         source = SyncSource(source=['aaabbbcccctext to stripcccbbbaaa',
                                     'text to strip'])
 
-        stage = Strip[str](source=source, chars='abc')
+        stage = Strip[str, str](source=source, chars='abc')
 
         i = 0
         async for t in stage:
@@ -135,7 +135,7 @@ class StripTestCase(IsolatedAsyncioTestCase):
                                     2,
                                     'text to strip'])
 
-        stage = Strip[str](source=source)
+        stage = Strip[str, str](source=source)
 
         with self.assertRaises(AttributeError):
             [t async for t in stage]
@@ -148,7 +148,7 @@ class RStripTestCase(IsolatedAsyncioTestCase):
                                     '     text to strip \n          ',
                                     '     text to strip'])
 
-        stage = RStrip[str](source=source)
+        stage = RStrip[str, str](source=source)
 
         i = 0
         async for t in stage:
@@ -161,7 +161,7 @@ class RStripTestCase(IsolatedAsyncioTestCase):
         source = SyncSource(source=['aaabbbcccctext to stripcccbbbaaa',
                                     'aaabbbcccctext to strip'])
 
-        stage = RStrip[str](source=source, chars='abc')
+        stage = RStrip[str, str](source=source, chars='abc')
 
         i = 0
         async for t in stage:
@@ -191,7 +191,7 @@ class LStripTestCase(IsolatedAsyncioTestCase):
                                     '   \n text to strip      ',
                                     'text to strip      '])
 
-        stage = LStrip[str](source=source)
+        stage = LStrip[str, str](source=source)
 
         i = 0
         async for t in stage:
@@ -204,7 +204,7 @@ class LStripTestCase(IsolatedAsyncioTestCase):
         source = SyncSource(source=['aaabbbcccctext to stripcccbbbaaa',
                                     'text to stripcccbbbaaa'])
 
-        stage = LStrip[str](source=source, chars='abc')
+        stage = LStrip[str, str](source=source, chars='abc')
 
         i = 0
         async for t in stage:
@@ -221,7 +221,7 @@ class LStripTestCase(IsolatedAsyncioTestCase):
                                     2,
                                     'text to strip      '])
 
-        stage = LStrip[str](source=source)
+        stage = LStrip[str, str](source=source)
 
         with self.assertRaises(AttributeError):
             [t async for t in stage]

@@ -11,7 +11,7 @@ from pyrill.strlike import Split, Strip
 class PipelineTestCase(IsolatedAsyncioTestCase):
 
     async def test_success(self):
-        stage = SyncSource(source=['text to split']) >> Split[str](sep=' ')
+        stage = SyncSource(source=['text to split']) >> Split[str, str](sep=' ')
 
         self.assertIsInstance(stage, Split)
         result = [t async for t in stage]
@@ -19,7 +19,7 @@ class PipelineTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, [['text', 'to', 'split']])
 
     async def test_success_inverted(self):
-        stage = Split[str](sep=' ') << SyncSource(source=['text to split'])
+        stage = Split[str, str](sep=' ') << SyncSource(source=['text to split'])
 
         self.assertIsInstance(stage, Split)
         result = [t async for t in stage]
@@ -27,7 +27,7 @@ class PipelineTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(result, [['text', 'to', 'split']])
 
     async def test_success_full(self):
-        sink = SyncSource(source=['text to split']) >> Split[str](sep=' ') >> First()
+        sink = SyncSource(source=['text to split']) >> Split[str, str](sep=' ') >> First()
 
         self.assertIsInstance(sink, First)
 
