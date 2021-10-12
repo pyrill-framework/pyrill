@@ -7,7 +7,7 @@
 # 	- PYPSARK 2.2, 2.3, 2.4, 3.0
 PACKAGE_COVERAGE=$(PACKAGE_DIR)
 
-PYPI_REPO?=http://artifactory.hi.inet/artifactory/api/pypi/pypi-phb-ctb
+PYPI_REPO?=
 PYPI_REPO_USERNAME?=
 PYPI_REPO_PASSWORD?=
 
@@ -16,6 +16,11 @@ ifneq "${PYPI_REPO_USERNAME}" ""
 else
 	TWINE_OPS?=
 endif
+
+ifneq "${PYPI_REPO}" ""
+    TWINE_OPS+= --repository-url "${PYPI_REPO}"
+endif
+
 
 # Minimum coverage
 COVER_MIN_PERCENTAGE=70
@@ -65,7 +70,7 @@ build:
 publish: build
 	@echo "Publishing new ${PACKAGE_NAME} version on HI Artifactory's PyPi..."
 	@echo ${TWINE_OPS}
-	twine upload --repository-url "${PYPI_REPO}" $(TWINE_OPS) dist/*.whl
+	twine upload $(TWINE_OPS) dist/*.whl
 
 autopep:
 	autopep8 --max-line-length 120 -a -r -j 8 -i .
