@@ -124,22 +124,23 @@ class BaseElement(ABC):
     async def mount(self):
         if self._state == ElementState.ERROR:
             raise RuntimeError('Element has an error')
-
-        async with self._state_lock:
-            if self._state == ElementState.READY:
-                return
-            self.log('Mounting', lvl=DEBUG)
-            await self._mount()
-            self._state = ElementState.READY
-            self.log('Ready', lvl=DEBUG)
-            self._send_message(self._build_message(BUS_MSG_ELEMENT_READY))
-
-    async def unmount(self):
-        if self._state != ElementState.READY:
-            return
         try:
             async with self._state_lock:
-                if self._state == ElementState.NULL:
+                if self._state != ElementState.NULL:
+                    return
+                self.log('Mounting', lvl=DEBUG)
+                await self._mount()
+                self._state = ElementState.READY
+                self.log('Ready', lvl=DEBUG)
+                self._send_message(self._build_message(BUS_MSG_ELEMENT_READY))
+        except BaseException as ex:
+            await self._set_error(ex)
+            raise
+
+    async def unmount(self):
+        try:
+            async with self._state_lock:
+                if self._state != ElementState.READY:
                     return
                 self.log('Unmounting', lvl=DEBUG)
                 await self._unmount()
