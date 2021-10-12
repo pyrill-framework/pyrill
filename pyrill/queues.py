@@ -5,6 +5,8 @@ from typing import Optional, Union
 from .base import (BaseIndependentConsumerStage, BaseProducer, BaseSource,
                    Source_co)
 
+__all__ = ['BaseQueue', 'Queue', 'QueueSource']
+
 
 class BaseQueue(BaseProducer[Source_co], ABC):
     _queue: 'Optional[AsyncQueue[Union[Source_co, BaseException]]]' = None

@@ -2,6 +2,8 @@ from typing import AsyncIterable, AsyncIterator, Iterable, Iterator, Optional
 
 from .base import BaseSource, Source_co
 
+__all__ = ['SyncSource', 'AsyncSource']
+
 
 class SyncSource(BaseSource[Source_co]):
     _source: Optional[Iterable[Source_co]] = None

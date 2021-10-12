@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Iterable, Iterator
 if TYPE_CHECKING:
     from .base import BaseSink
 
+__all__ = ['SinkConsumer']
+
 
 class SinkConsumer:
 

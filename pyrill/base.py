@@ -10,8 +10,13 @@ from typing import (TYPE_CHECKING, Any, AsyncContextManager, AsyncIterator,
                     Callable, Dict, Generic, Iterable, List, Optional, Set,
                     Tuple, TypeVar, Union, cast)
 from uuid import uuid4
+from weakref import WeakSet
 
-from _weakrefset import WeakSet
+__all__ = ['Message', 'ElementState', 'FrameSkippedError', 'EndOfStream',
+           'BaseElement', 'BaseProducer', 'BaseConsumer', 'BaseSource', 'BaseStage', 'BaseSink',
+           'BaseIndependentConsumer', 'BaseIndependentConsumerStage', 'Bus', 'MessageFilter', 'SimpleMessageFilter',
+           'BUS_MSG_LOG', 'BUS_MSG_ELEMENT_NULL', 'BUS_MSG_ELEMENT_READY', 'BUS_MSG_ELEMENT_ERROR',
+           'BUS_MSG_FRAME_SKIPPED', 'BUS_MSG_START_STREAM', 'BUS_MSG_STOP_STREAM', 'BUS_MSG_RESET_STREAM']
 
 if TYPE_CHECKING:
     from .bus import BusMessageSink, BusMessageSource

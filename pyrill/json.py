@@ -6,6 +6,9 @@ from .base import BaseElement, BaseProducer, BaseSource, BaseStage
 from .primitives import BaseBinStage, PrefixStream, SuffixStream
 from .sources import SyncSource
 
+__all__ = ['BaseFromJson', 'BaseToJson', 'FromJson', 'ToJson', 'ToJsonList',
+           'ToJsonObject', 'DataToJson', 'ToJsonPerLine']
+
 
 class BaseFromJson(BaseElement):
     def __init__(self,

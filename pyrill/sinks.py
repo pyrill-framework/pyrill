@@ -4,6 +4,8 @@ from typing import Optional, Union, cast
 
 from .base import BaseSink, FrameSkippedError, Sink_co, Source_co
 
+__all__ = ['BaseOneFrameSink', 'Last', 'First', 'BlackHole']
+
 
 class BaseOneFrameSink(BaseSink[Sink_co], ABC):
     _frame_fut: 'Optional[Future[Sink_co]]' = None

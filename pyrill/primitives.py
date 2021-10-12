@@ -14,6 +14,9 @@ from .base import (BUS_MSG_ELEMENT_ERROR, BUS_MSG_ELEMENT_NULL,
                    FrameSkippedError, Message, Sink_co, Source_co)
 from .sources import AsyncSource
 
+__all__ = ['Noop', 'Sequential', 'SkipIf', 'Branch', 'Tee', 'Aggregator', 'PrefixStream', 'SuffixStream',
+           'Cache', 'CombineStreams', 'JoinFrame', 'JoinStreams']
+
 
 class Noop(BaseStage[Source_co, Source_co]):
     async def process_frame(self, frame: Source_co) -> Source_co:

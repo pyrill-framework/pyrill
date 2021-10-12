@@ -6,6 +6,8 @@ from .queues import QueueSource
 if TYPE_CHECKING:
     from .base import Bus, Message
 
+__all__ = ['BusMessageSource', 'BusMessageSink']
+
 
 class BusMessageSource(QueueSource['Message']):
 
