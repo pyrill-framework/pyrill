@@ -1,10 +1,9 @@
 from abc import ABC, abstractmethod
-from asyncio import CancelledError, Condition, Future
+from asyncio import Condition
 from datetime import datetime
 from typing import AnyStr, Optional, Union
 
-from .base import (BaseIndependentConsumer, BaseIndependentConsumerStage,
-                   BaseProducer, FrameSkippedError)
+from .base import BaseProducer, BaseStage, FrameSkippedError
 
 
 class BaseDataChunkProducer(BaseProducer[AnyStr], ABC):
@@ -71,7 +70,10 @@ class BaseDataAccumulatorProducer(BaseDataChunkProducer[AnyStr], ABC):
         if self._buffer is None:
             raise RuntimeError('Buffer not initialized')
         if len(self._buffer) == 0:
-            raise FrameSkippedError()
+            if self._open_buffer:
+                raise FrameSkippedError()
+            else:
+                raise StopAsyncIteration()
 
         result = self._buffer
         self._buffer = self.empty_buffer()
@@ -80,14 +82,14 @@ class BaseDataAccumulatorProducer(BaseDataChunkProducer[AnyStr], ABC):
 
 class BaseSizedChunksProducer(BaseDataChunkProducer[AnyStr], ABC):
 
-    def __init__(self, *args, min_size: int = 0, max_size: int = 1024, **kwargs):
+    def __init__(self, *args, min_size: int = 1024, max_size: int = 1024 * 100, **kwargs):
         super(BaseSizedChunksProducer, self).__init__(*args, **kwargs)
 
-        self._max_size = max_size
-        self._min_size = min_size
+        self._min_size = max(min_size, 1)
+        self._max_size = max(self._min_size, max_size)
 
     async def _notify(self):
-        if len(self._buffer) >= self._min_size:
+        if len(self._buffer) >= self._min_size or not self._open_buffer:
             await super(BaseSizedChunksProducer, self)._notify()
 
     async def _next_chunk(self) -> AnyStr:
@@ -201,3 +203,87 @@ class BaseChunksFirstSeparatorProducer(BaseChunksSeparatorProducer[AnyStr], ABC)
             result = self._buffer
             self._buffer = self._buffer[:0]
         return result
+
+
+class DataAccumulator(BaseStage[AnyStr, AnyStr]):
+    _buffer: Optional[AnyStr] = None
+    _open_stream: bool = False
+
+    def __init__(self, *args, min_size=1024, max_size=1024, **kwargs):
+        super(DataAccumulator, self).__init__(*args, **kwargs)
+
+        self.min_size: int = max(min_size, 1)
+        self.max_size: int = max(max_size, 0)
+
+    async def _mount(self):
+        self._buffer = None
+        self._open_stream = True
+        await super(DataAccumulator, self)._mount()
+
+    async def _unmount(self):
+        self._buffer = None
+        self._open_stream = False
+        await super(DataAccumulator, self)._unmount()
+
+    async def process_frame(self, frame: AnyStr) -> AnyStr:
+        if self._buffer is None:
+            self._buffer = frame
+        else:
+            self._buffer += frame
+
+        if len(self._buffer) < self.min_size and self._open_stream:
+            raise FrameSkippedError()
+
+        if self.max_size > 0:
+            data = self._buffer[:self.max_size]
+        else:
+            data = self._buffer
+        self._buffer = self._buffer[len(data):]
+
+        return data
+
+    async def _next_frame(self) -> AnyStr:
+        try:
+            frame = await self.consume_frame()
+        except StopAsyncIteration:
+            self._open_stream = False
+            if self._buffer is not None and len(self._buffer):
+                frame = self._buffer[:0]
+            else:
+                raise
+
+        return await self.process_frame(frame)
+
+
+class SkipUntil(BaseStage[AnyStr, AnyStr]):
+    _skipped: bool = False
+
+    def __init__(self, *args, mark: AnyStr, **kwargs):
+        super(SkipUntil, self).__init__(*args, **kwargs)
+
+        self.mark: AnyStr = mark
+
+    async def _mount(self):
+        self._skipped = False
+        await super(SkipUntil, self)._mount()
+
+    async def _unmount(self):
+        self._skipped = False
+        await super(SkipUntil, self)._unmount()
+
+    async def process_frame(self, frame: AnyStr) -> AnyStr:
+        if self._skipped:
+            return frame
+
+        if self.mark not in frame:
+            raise FrameSkippedError()
+
+        _, data = frame.split(self.mark, 1)
+
+        self._skipped = True
+        return data
+
+    async def _next_frame(self) -> AnyStr:
+        frame = await self.consume_frame()
+
+        return await self.process_frame(frame)

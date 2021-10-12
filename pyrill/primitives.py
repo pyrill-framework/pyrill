@@ -1,5 +1,5 @@
 from abc import ABC
-from asyncio import ensure_future
+from asyncio import InvalidStateError, ensure_future
 from asyncio.futures import Future
 from asyncio.locks import Lock
 from asyncio.tasks import wait
@@ -66,18 +66,25 @@ class _InnerBranchProducer(BaseProducer[Source_co]):
 
 
 class Branch(BaseConsumer[Sink_co]):
-    def __init__(self, *args, branch_func: Callable[[Sink_co], Union[str, Awaitable[str]]], **kwargs):
+    def __init__(self,
+                 *args,
+                 branch_func: Callable[[Sink_co], Union[Any, Awaitable[Any]]],
+                 on_unknown_branch: Callable[[Any, Sink_co], Union[Any, Awaitable[Any]]] = None,
+                 **kwargs):
         super(Branch, self).__init__(*args, **kwargs)
 
         self._branch_func = branch_func
-        self._branches: Dict[str, _InnerBranchProducer[Sink_co]] = {}
-        self._futs: Dict[str, Future[Sink_co]] = {}
+        self._branches: Dict[Any, _InnerBranchProducer[Sink_co]] = {}
+        self._futs: Dict[Any, Future[Sink_co]] = {}
         self._lock: Lock = Lock()
+        self._on_unknown_branch: Optional[Callable[[Any, Sink_co], Union[Any, Awaitable[Any]]]] = on_unknown_branch
 
     def _remove_fut(self, fut: Future):
         self._futs = {k: v for k, v in self._futs.items() if v != fut}
 
-    async def request_frame(self, key: str) -> Sink_co:
+    async def request_frame(self, key: Any) -> Sink_co:
+        await self.mount()
+
         if key not in self._branches.keys():
             raise StopAsyncIteration()
 
@@ -94,36 +101,44 @@ class Branch(BaseConsumer[Sink_co]):
             await self.consume_frame()
         return await fut
 
-    def add_branch(self, key: str, consumer: BaseConsumer[Sink_co]):
+    def add_branch(self, key: Any, consumer: BaseConsumer[Sink_co]) -> BaseConsumer[Sink_co]:
         inner = _InnerBranchProducer[Sink_co](key=key, parent=self, loop=self._loop)
         inner >> consumer
         self._branches[key] = inner
 
-    def get_branch(self, name: str) -> _InnerBranchProducer[Sink_co]:
-        return self._branches[name]
+        return consumer
 
-    def remove_branch(self, name: str):
+    def get_branch(self, key: Any) -> _InnerBranchProducer[Sink_co]:
+        return self._branches[key]
 
+    def remove_branch(self, key: Any):
         try:
-            del self._branches[name]
+            del self._branches[key]
         except KeyError:
             pass
+
         try:
-            self._futs[name].set_exception(StopAsyncIteration())
-            del self._futs[name]
-        except KeyError:
+            self._futs[key].set_exception(StopAsyncIteration())
+            del self._futs[key]
+        except (KeyError, InvalidStateError):
             pass
 
     async def consume_frame(self) -> Sink_co:
         while True:
-            frame = await super(Branch, self).consume_frame()
+            try:
+                frame = await super(Branch, self).consume_frame()
+            except StopAsyncIteration:
+                [self.remove_branch(key) for key in list(self._branches.keys())]
+                raise
+            except BaseException as ex:
+                frame = ex
 
             try:
                 branch: Union[Awaitable[str], str] = self._branch_func(frame)
                 if isawaitable(branch):
-                    branch = await cast(Awaitable[str], branch)
+                    branch = await cast(Awaitable[Any], branch)
                 else:
-                    branch = cast(str, branch)
+                    branch = cast(Any, branch)
             except Exception:
                 # TODO Process exception
                 continue
@@ -131,11 +146,31 @@ class Branch(BaseConsumer[Sink_co]):
             try:
                 fut: Future = self._futs.pop(branch)
             except KeyError:
-                # TODO Process exception
+                if await self._unknown_branch(branch, frame):
+                    return frame
                 continue
 
             fut.set_result(frame)
             return frame
+
+    async def _unknown_branch(self, branch: Any, frame: Sink_co):
+        if self._on_unknown_branch:
+            try:
+                result = self._on_unknown_branch(branch, frame)
+                if isawaitable(result):
+                    await result
+            except Exception:
+                return False
+            else:
+                return True
+        return False
+
+    def on_unknown_branch(
+            self,
+            func: Callable[[Any, Sink_co], Union[Any, Awaitable[Any]]]
+    ) -> Callable[[Any, Sink_co], Union[Any, Awaitable[Any]]]:
+        self._on_unknown_branch = func
+        return func
 
 
 class _InnerTeeProducer(BaseProducer[Source_co]):
@@ -165,6 +200,8 @@ class Tee(BaseConsumer[Source_co]):
         self._futs = {k: v for k, v in self._futs.items() if v != fut}
 
     async def request_frame(self, producer: '_InnerTeeProducer') -> Source_co:
+        await self.mount()
+
         if producer not in self._consumers:
             raise StopAsyncIteration()
 
@@ -183,7 +220,7 @@ class Tee(BaseConsumer[Source_co]):
         inner = _InnerTeeProducer[Source_co](parent=self)
         inner >> consumer
         self._consumers.add(inner)
-        return inner
+        return consumer
 
     def get_consumers(self) -> Set[_InnerTeeProducer[Source_co]]:
         return self._consumers.copy()
@@ -197,14 +234,18 @@ class Tee(BaseConsumer[Source_co]):
         try:
             self._futs[consumer].set_exception(StopAsyncIteration())
             del self._futs[consumer]
-        except KeyError:
+        except (KeyError, InvalidStateError):
             pass
 
     def consumer_count(self):
         return len(self._consumers)
 
     async def consume_frame(self) -> Source_co:
-        frame = await super(Tee, self).consume_frame()
+        try:
+            frame = await super(Tee, self).consume_frame()
+        except StopAsyncIteration:
+            [self.remove_consumer(c) for c in self._consumers.copy()]
+            raise
 
         for fut in self._futs.values():
             fut.set_result(frame)
@@ -535,7 +576,6 @@ class BaseBinSink(BaseBinConsumer[Sink_co], BaseSink[Sink_co], ABC):
 
 
 class CacheBridge(BaseStage[Source_co, Source_co]):
-
     _idx: int = 0
 
     async def _mount(self):

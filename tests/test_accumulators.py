@@ -1,7 +1,7 @@
-from typing import Any
+from typing import Any, List
 from unittest import IsolatedAsyncioTestCase
 
-from pyrill.accumulators import ListAcc, SumAcc
+from pyrill.accumulators import Count, ListAcc, Size, SumAcc
 from pyrill.sources import SyncSource
 
 
@@ -49,3 +49,53 @@ class ListAccTestCase(IsolatedAsyncioTestCase):
         result = [t async for t in stage]
 
         self.assertEqual(result, [[2, ], [2, 56], [2, 56, 34]])
+
+
+class CountTestCase(IsolatedAsyncioTestCase):
+
+    async def test_success(self):
+        source = SyncSource[int](source=[2, 56, 34])
+
+        stage = Count(source=source)
+
+        result = [t async for t in stage]
+
+        self.assertEqual(result, [1, 2, 3])
+
+
+class SizeTestCase(IsolatedAsyncioTestCase):
+
+    async def test_success_str(self):
+        source = SyncSource[str](source=['2', '56', '34'])
+
+        stage = Size(source=source)
+
+        result = [t async for t in stage]
+
+        self.assertEqual(result, [1, 3, 5])
+
+    async def test_success_bytes(self):
+        source = SyncSource[bytes](source=[b'2', b'56', b'34'])
+
+        stage = Size(source=source)
+
+        result = [t async for t in stage]
+
+        self.assertEqual(result, [1, 3, 5])
+
+    async def test_success_list(self):
+        source = SyncSource[List[int]](source=[[2, ], [5, 6], [3, 4]])
+
+        stage = Size(source=source)
+
+        result = [t async for t in stage]
+
+        self.assertEqual(result, [1, 3, 5])
+
+    async def test_fail_no_size(self):
+        source = SyncSource[str](source=['2', 56, '34'])
+
+        stage = Size(source=source)
+
+        with self.assertRaises(TypeError):
+            [t async for t in stage]

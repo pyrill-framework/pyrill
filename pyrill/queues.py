@@ -1,5 +1,4 @@
 from abc import ABC
-from asyncio import CancelledError
 from asyncio import Queue as AsyncQueue
 from typing import Optional, Union
 

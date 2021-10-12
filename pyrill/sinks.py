@@ -13,12 +13,12 @@ class BaseOneFrameSink(BaseSink[Sink_co], ABC):
 
         await super(BaseOneFrameSink, self)._mount()
 
-    async def _unmount(self):
+    def reset_frame(self):
         self._frame_fut = None
 
-        await super(BaseOneFrameSink, self)._unmount()
-
     async def get_frame(self) -> Sink_co:
+        if self._frame_fut is not None:
+            return await self._frame_fut
         await self.mount()
         self.consume_all()
         if self._frame_fut is None:

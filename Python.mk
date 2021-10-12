@@ -74,11 +74,11 @@ flake:
 	@echo "Running flake8 tests..."
 	flake8 ${PACKAGE_COVERAGE}
 	flake8 tests
-	flake8 docs/source
+	# flake8 docs/source
 	isort -c ${ISORT_PARAMS} ${PACKAGE_COVERAGE}
 	isort -c ${ISORT_PARAMS} tests
 	isort -c ${ISORT_PARAMS} setup.py
-	isort -c ${ISORT_PARAMS} docs/source
+	# isort -c ${ISORT_PARAMS} docs/source
 
 
 run-tests:

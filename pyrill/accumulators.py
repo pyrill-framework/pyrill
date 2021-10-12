@@ -1,4 +1,4 @@
-from typing import List, Optional, TypeVar
+from typing import Any, List, Optional, Sized, TypeVar
 
 from .base import BaseStage, Source_co
 
@@ -46,7 +46,40 @@ class ListAcc(BaseStage[Source_co, List[Source_co]]):
         await super(ListAcc, self)._unmount()
 
     async def process_frame(self, frame: Source_co) -> List[Source_co]:
-        if self._accum is None:
+        if self._accum is None:  # pragma: no cover
             raise RuntimeError('Accumulator not initialized')
         self._accum.append(frame)
+
         return self._accum.copy()
+
+
+class Count(BaseStage[Any, int]):
+    _counter: int = 0
+
+    async def _mount(self):
+        self._counter = 0
+        await super(Count, self)._mount()
+
+    async def _unmount(self):
+        self._counter = 0
+        await super(Count, self)._unmount()
+
+    async def process_frame(self, frame: Any) -> int:
+        self._counter += 1
+        return self._counter
+
+
+class Size(BaseStage[Sized, int]):
+    _acc: int = 0
+
+    async def _mount(self):
+        self._acc = 0
+        await super(Size, self)._mount()
+
+    async def _unmount(self):
+        self._acc = 0
+        await super(Size, self)._unmount()
+
+    async def process_frame(self, frame: Sized) -> int:
+        self._acc += len(frame)
+        return self._acc

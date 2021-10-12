@@ -324,7 +324,6 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
             pass
         except StopAsyncIteration:
             self.log('Sink finished')
-            await self.unmount()
         except Exception as ex:
             await self._set_error(ex)
             raise
@@ -439,6 +438,10 @@ class BaseIndependentConsumerStage(BaseIndependentConsumer[Source_co], BaseProdu
     @abstractmethod
     async def push_frame(self, frame: Union[Source_co, BaseException]):
         raise NotImplementedError()
+
+    async def _mount(self):
+        await super(BaseIndependentConsumerStage, self)._mount()
+        self.start_consumer()
 
 
 class MessageFilter:
