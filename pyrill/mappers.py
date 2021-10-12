@@ -1,5 +1,5 @@
 from inspect import Parameter, isawaitable, signature
-from typing import Any, Awaitable, Callable, Dict, Protocol, Union
+from typing import Any, Awaitable, Callable, Dict, Protocol, Union, overload
 
 from .base import BaseStage, FrameSkippedError, Sink_co, Source_co
 
@@ -59,6 +59,11 @@ def extract_kwargs(kwargs: Dict, func: Callable) -> Dict:
 class MapCallback(Protocol[Source_co, Sink_co]):  # pragma: nocover
     def __call__(self, frame: Source_co, **kwargs: Any) -> Sink_co:
         pass
+
+
+@overload
+def make_map(func: MapCallback[Source_co, Source_co]):
+    ...
 
 
 def make_map(func: MapCallback[Source_co, Sink_co]):
