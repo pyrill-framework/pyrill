@@ -6,7 +6,7 @@ from .base import BaseSink, FrameSkippedError, Sink_co, Source_co
 
 
 class BaseOneFrameSink(BaseSink[Sink_co], ABC):
-    _frame_fut: Optional[Future[Sink_co]] = None
+    _frame_fut: 'Optional[Future[Sink_co]]' = None
 
     async def _mount(self):
         self._frame_fut = Future()
@@ -46,7 +46,7 @@ class First(BaseOneFrameSink[Sink_co]):
 class Last(BaseOneFrameSink[Sink_co]):
     EMPTY = object()
 
-    _previous_frame: Union[Sink_co, object] = EMPTY
+    _previous_frame: 'Union[Sink_co, object]' = EMPTY
 
     async def _mount(self):
         self._previous_frame = self.EMPTY

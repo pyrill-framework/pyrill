@@ -75,7 +75,7 @@ class Branch(BaseConsumer[Sink_co]):
 
         self._branch_func = branch_func
         self._branches: Dict[Any, _InnerBranchProducer[Sink_co]] = {}
-        self._futs: Dict[Any, Future[Sink_co]] = {}
+        self._futs: 'Dict[Any, Future[Sink_co]]' = {}
         self._lock: Lock = Lock()
         self._on_unknown_branch: Optional[Callable[[Any, Sink_co], Union[Any, Awaitable[Any]]]] = on_unknown_branch
 
@@ -192,8 +192,8 @@ class Tee(BaseConsumer[Source_co]):
     def __init__(self, *args, **kwargs):
         super(Tee, self).__init__(*args, **kwargs)
 
-        self._consumers: Set[_InnerTeeProducer[Source_co]] = set()
-        self._futs: Dict['_InnerTeeProducer[Source_co]', Future[Source_co]] = {}
+        self._consumers: 'Set[_InnerTeeProducer[Source_co]]' = set()
+        self._futs: 'Dict[_InnerTeeProducer[Source_co], Future[Source_co]]' = {}
         self._lock: Lock = Lock()
 
     def _remove_fut(self, fut: Future):
@@ -216,7 +216,7 @@ class Tee(BaseConsumer[Source_co]):
             await self.consume_frame()
         return await fut
 
-    def add_consumer(self, consumer: BaseConsumer[Source_co]) -> _InnerTeeProducer:
+    def add_consumer(self, consumer: 'BaseConsumer[Source_co]') -> _InnerTeeProducer:
         inner = _InnerTeeProducer[Source_co](parent=self)
         inner >> consumer
         self._consumers.add(inner)
@@ -225,7 +225,7 @@ class Tee(BaseConsumer[Source_co]):
     def get_consumers(self) -> Set[_InnerTeeProducer[Source_co]]:
         return self._consumers.copy()
 
-    def remove_consumer(self, consumer: _InnerTeeProducer):
+    def remove_consumer(self, consumer: '_InnerTeeProducer'):
         try:
             self._consumers.remove(consumer)
         except KeyError:
@@ -275,16 +275,16 @@ class Aggregator(BaseProducer[Tuple[Source_co]]):
     def bus(self) -> 'Bus':
         return self._bus
 
-    def add_source(self, source: BaseProducer[Any]):
+    def add_source(self, source: 'BaseProducer[Any]'):
         self._sources.append(source)
         if source.bus is None:
             raise RuntimeError('Aggregator source must have a bus')
         self.bus.pipe(source.bus)
 
-    def get_source(self, idx: int) -> BaseProducer[Any]:
+    def get_source(self, idx: int) -> 'BaseProducer[Any]':
         return self._sources[idx]
 
-    def remove_source(self, source: BaseProducer[Any]):
+    def remove_source(self, source: 'BaseProducer[Any]'):
         try:
             self._sources.remove(source)
             self.bus.unpipe(source.bus)
@@ -298,11 +298,11 @@ class Aggregator(BaseProducer[Tuple[Source_co]]):
         await super(Aggregator, self)._set_error(ex)
         [await src.unmount() for src in self._sources]
 
-    async def _next_frame(self) -> Tuple[Any, ...]:
+    async def _next_frame(self) -> 'Tuple[Any, ...]':
         done, _ = await wait([source.__anext__() for source in self._sources])
         return tuple(fut.result() for fut in done)
 
-    def __lshift__(self, other: BaseElement) -> 'BaseElement':
+    def __lshift__(self, other: 'BaseElement') -> 'BaseElement':
         if isinstance(other, BaseProducer):
             self.add_source(other)
             return self
@@ -391,7 +391,7 @@ class JoinFrame(Noop[Source_co]):
 
 
 class JoinStreams(BaseStage[AsyncIterable[Source_co], Source_co]):
-    _frame_iter: Optional[AsyncIterator[Source_co]] = None
+    _frame_iter: 'Optional[AsyncIterator[Source_co]]' = None
 
     async def _mount(self):
         self._frame_iter = None
@@ -412,7 +412,7 @@ class JoinStreams(BaseStage[AsyncIterable[Source_co], Source_co]):
                 self._frame_iter = None
                 continue
 
-    async def process_frame(self, frame: AsyncIterable[Source_co]) -> AsyncIterable[Source_co]:
+    async def process_frame(self, frame: 'AsyncIterable[Source_co]') -> 'AsyncIterable[Source_co]':
         return frame
 
 
@@ -427,11 +427,13 @@ class CombineStreams(BaseProducer[Tuple[Source_co]]):
     def bus(self) -> 'Bus':
         return self._bus
 
-    def add_source(self, source: BaseProducer[Source_co]):
+    def add_source(self, source: 'BaseProducer[Source_co]') -> 'CombineStreams':
         self._sources[source] = None
         if source.bus is None:
             raise RuntimeError('CombineStream source must have a bus')
         self.bus.pipe(source.bus)
+
+        return self
 
     def remove_source(self, source: BaseProducer[Source_co]):
         try:
@@ -450,18 +452,18 @@ class CombineStreams(BaseProducer[Tuple[Source_co]]):
         await super(CombineStreams, self)._set_error(ex)
         [await src.unmount() for src in self._sources]
 
-    async def _next_frame(self) -> Tuple[Any, ...]:
+    async def _next_frame(self) -> 'Tuple[Any, ...]':
         done, _ = await wait([source.__anext__() for source in self._sources])
         return tuple(fut.result() for fut in done)
 
-    def __lshift__(self, other: BaseElement) -> 'BaseElement':
+    def __lshift__(self, other: 'BaseElement') -> 'BaseElement':
         if isinstance(other, BaseProducer):
             self.add_source(other)
             return self
         else:
             return super(CombineStreams, self).__lshift__(other)
 
-    def __lrshift__(self, other: BaseElement) -> 'BaseElement':
+    def __lrshift__(self, other: 'BaseElement') -> 'BaseElement':
         return self.__lshift__(other)
 
 
@@ -493,7 +495,7 @@ class BaseBinProducer(BinMixin, BaseProducer[Source_co], ABC):
         self._downstream_producer: Optional[BaseProducer[Source_co]] = None
         self._inner_iter: Optional[AsyncIterable[Source_co]] = None
 
-    def set_downstream_producer(self, elem: BaseProducer):
+    def set_downstream_producer(self, elem: 'BaseProducer'):
         if self._downstream_producer == elem:
             return
         if elem.bus is None:
@@ -537,17 +539,17 @@ class BaseBinConsumer(BinMixin, BaseConsumer[Sink_co], ABC):
 
         self._inner_bus.add_handler(self._msg_forward)
 
-        self._upstream_consumer: Optional[BaseConsumer[Sink_co]] = None
-        self._iter: Optional[AsyncIterable[Sink_co]] = None
+        self._upstream_consumer: 'Optional[BaseConsumer[Sink_co]]' = None
+        self._iter: 'Optional[AsyncIterable[Sink_co]]' = None
 
-    def set_source(self, value: Optional[BaseProducer[Sink_co]] = None):
+    def set_source(self, value: 'Optional[BaseProducer[Sink_co]]' = None):
         super(BaseBinConsumer, self).set_source(value)
         try:
             self._upstream_bridge.source = value
         except AttributeError:
             pass
 
-    def set_upstream_consumer(self, elem: BaseConsumer):
+    def set_upstream_consumer(self, elem: 'BaseConsumer'):
         if self._upstream_consumer == elem:
             return
 
@@ -600,8 +602,8 @@ class CacheBridge(BaseStage[Source_co, Source_co]):
 
 
 class Cache(BaseStage[Source_co, Source_co]):
-    _cached_data: Optional[List[Source_co]] = None
-    _next_fut: Optional[Future] = None
+    _cached_data: 'Optional[List[Source_co]]' = None
+    _next_fut: 'Optional[Future]' = None
 
     async def _mount(self):
         if self._cached_data is None:

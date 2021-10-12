@@ -126,7 +126,7 @@ class BranchTestCase(IsolatedAsyncioTestCase):
 
         sink_consumer.add_sink(branch.add_branch(None, BlackHole()))
 
-        await sink_consumer.wait_until_finish_all()
+        await sink_consumer
 
         for sink in sink_consumer:
             if not isinstance(sink, Last):
