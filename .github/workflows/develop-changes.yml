@@ -12,7 +12,6 @@ jobs:
 
     env:
       PACKAGE_DEVELOPMENT: ${{ github.run_number }}
-      PACKAGE_COMMIT: ${{ github.sha }}
       PYPI_REPO_USERNAME: __token__
       PYPI_REPO_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
 
