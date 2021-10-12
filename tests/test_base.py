@@ -72,7 +72,7 @@ class BaseSinkTestCase(IsolatedAsyncioTestCase):
 class BaseStageTestCase(IsolatedAsyncioTestCase):
 
     async def test_consume_all_fail_last(self):
-        class StopStage(BaseStage[Any, [Any]]):
+        class StopStage(BaseStage[Any, Any]):
             async def process_frame(self, frame: Any) -> Any:
                 raise StopAsyncIteration()
 
