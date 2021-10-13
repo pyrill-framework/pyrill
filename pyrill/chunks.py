@@ -80,7 +80,7 @@ class BaseDataAccumulatorProducer(BaseDataChunkProducer[AnyStr], ABC):
                 raise StopAsyncIteration()
 
         result = self._buffer
-        self._buffer = self.empty_buffer()
+        self._buffer = self._buffer[:0]
         return result
 
 
@@ -169,8 +169,16 @@ class BaseChunksSeparatorProducer(BaseDataAccumulatorProducer[AnyStr], ABC):
         if self._buffer is None:
             raise RuntimeError('Buffer not initialized')
 
-        if self.separator not in self._buffer and self._open_buffer:
-            raise FrameSkippedError()
+        if self.separator not in self._buffer:
+            if self._open_buffer:
+                raise FrameSkippedError()
+            elif len(self._buffer):
+                result = self._buffer
+                self._buffer = self._buffer[:0]
+                return result
+            else:
+                raise StopAsyncIteration()
+
         result = self._buffer.split(self.separator, 1)
         try:
             self._buffer = result[1]
@@ -198,8 +206,16 @@ class BaseChunksFirstSeparatorProducer(BaseChunksSeparatorProducer[AnyStr], ABC)
         if self._buffer is None:
             raise RuntimeError('Buffer not initialized')
 
-        if ((self._first_sep and self.separator not in self._buffer) or len(self._buffer) == 0) and self._open_buffer:
-            raise FrameSkippedError()
+        if ((self._first_sep and self.separator not in self._buffer) or len(self._buffer) == 0):
+            if self._open_buffer:
+                raise FrameSkippedError()
+            elif len(self._buffer) > 0:
+                result = self._buffer
+                self._buffer = self._buffer[:0]
+                return result
+            else:
+                raise StopAsyncIteration()
+
         if self._first_sep:
             result = await super(BaseChunksFirstSeparatorProducer, self)._next_chunk()
             self._first_sep = False

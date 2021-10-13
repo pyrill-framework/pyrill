@@ -1,5 +1,10 @@
 from inspect import Parameter, isawaitable, signature
-from typing import Any, Awaitable, Callable, Dict, Protocol, Union
+from typing import Any, Awaitable, Callable, Dict, Union
+
+try:
+    from typing import Protocol
+except ImportError:
+    from typing_extensions import Protocol
 
 from .base import BaseStage, FrameSkippedError, Sink_co, Source_co
 
