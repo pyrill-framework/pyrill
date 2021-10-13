@@ -393,29 +393,42 @@ class JoinFrame(Noop[Source_co]):
         return self.sep
 
 
-class JoinStreams(BaseStage[AsyncIterable[Source_co], Source_co]):
+class JoinStreams(BaseStage[BaseProducer[Source_co], Source_co]):
+    _current_producer: 'Optional[BaseProducer[Source_co]]' = None
     _frame_iter: 'Optional[AsyncIterator[Source_co]]' = None
 
     async def _mount(self):
         self._frame_iter = None
+        self._current_producer = None
+
         await super(JoinStreams, self)._mount()
 
     async def _unmount(self):
         self._frame_iter = None
+
+        if self._current_producer is not None:
+            await self._current_producer.unmount()
+
+        self._current_producer = None
 
         await super(JoinStreams, self)._unmount()
 
     async def _consume_frame(self) -> Source_co:
         while True:
             if self._frame_iter is None:
-                self._frame_iter = await super(JoinStreams, self)._consume_frame()
+                self._current_producer = await super(JoinStreams, self)._consume_frame()
+                self._current_producer.bus.pipe(self.bus)
+                self._frame_iter = self._current_producer.__aiter__()
             try:
                 return await self._frame_iter.__anext__()
             except StopAsyncIteration:
+                self._current_producer.bus.unpipe(self.bus)
                 self._frame_iter = None
+                await self._current_producer.unmount()
+                self._current_producer = None
                 continue
 
-    async def process_frame(self, frame: 'AsyncIterable[Source_co]') -> 'AsyncIterable[Source_co]':
+    async def process_frame(self, frame: 'BaseProducer[Source_co]') -> 'BaseProducer[Source_co]':
         return frame
 
 

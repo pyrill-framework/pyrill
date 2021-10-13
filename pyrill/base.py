@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
 from asyncio import (AbstractEventLoop, CancelledError, Future, Task,
-                     current_task, ensure_future, get_event_loop)
+                     ensure_future, get_event_loop)
 from asyncio.locks import Lock
-from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from enum import Enum
 from logging import DEBUG, INFO
@@ -11,6 +10,15 @@ from typing import (TYPE_CHECKING, Any, AsyncContextManager, AsyncIterator,
                     Tuple, TypeVar, Union, cast)
 from uuid import uuid4
 from weakref import WeakSet
+
+try:
+    from asyncio import current_task
+except ImportError:
+    current_task = Task.current_task
+try:
+    from contextlib import AsyncExitStack
+except ImportError:
+    from async_exit_stack import AsyncExitStack
 
 __all__ = ['Message', 'ElementState', 'FrameSkippedError', 'EndOfStream',
            'BaseElement', 'BaseProducer', 'BaseConsumer', 'BaseSource', 'BaseStage', 'BaseSink',
@@ -539,7 +547,7 @@ class Bus:
         sink = cast('BusMessageSink', bus.build_source() >> BusMessageSink(src_bus=bus, dst_bus=self))
         self._consumers.add(sink)
 
-        ensure_future(sink.consume_all(), loop=self._loop)
+        sink.consume_all()
 
     def unpipe(self, bus: 'Bus'):
         try:
