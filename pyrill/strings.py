@@ -4,9 +4,10 @@ from .chunks import (BaseChunksFirstSeparatorProducer,
                      BaseSizedChunksProducer)
 from .mappers import make_map
 
-__all__ = ['SizedChunksSource', 'ChunksSlowStartSource', 'ChunksSeparatorSource', 'ChunksFirstSeparatorSource',
-           'SizedChunks', 'ChunksSlowStart', 'ChunksSeparator', 'ChunksFirstSeparator', 'Encode',
-           'Lower', 'Upper']
+__all__ = ['StringSizedChunksSource', 'StringChunksSlowStartSource', 'StringChunksSeparatorSource',
+           'StringChunksFirstSeparatorSource',
+           'StringSizedChunks', 'StringChunksSlowStart', 'StringChunksSeparator', 'StringChunksFirstSeparator',
+           'Encode', 'Lower', 'Upper']
 
 
 class StringChunksMixin:
@@ -23,45 +24,45 @@ class StringSeparatorMixin(StringChunksMixin):
 
 # Sources
 
-class SizedChunksSource(StringChunksMixin, BaseSizedChunksProducer[str], BaseSource[str]):
+class StringSizedChunksSource(StringChunksMixin, BaseSizedChunksProducer[str], BaseSource[str]):
     pass
 
 
-class ChunksSlowStartSource(StringChunksMixin, BaseChunksSlowStartProducer[str], BaseSource[str]):
+class StringChunksSlowStartSource(StringChunksMixin, BaseChunksSlowStartProducer[str], BaseSource[str]):
     pass
 
 
-class ChunksSeparatorSource(StringSeparatorMixin, BaseChunksSeparatorProducer[str], BaseSource[str]):
+class StringChunksSeparatorSource(StringSeparatorMixin, BaseChunksSeparatorProducer[str], BaseSource[str]):
     pass
 
 
-class ChunksFirstSeparatorSource(StringSeparatorMixin, BaseChunksFirstSeparatorProducer[str], BaseSource[str]):
+class StringChunksFirstSeparatorSource(StringSeparatorMixin, BaseChunksFirstSeparatorProducer[str], BaseSource[str]):
     pass
 
 
 # Middle stages
 
-class SizedChunks(StringChunksMixin,
-                  BaseSizedChunksProducer[str],
-                  BaseIndependentConsumerStage[str]):
+class StringSizedChunks(StringChunksMixin,
+                        BaseSizedChunksProducer[str],
+                        BaseIndependentConsumerStage[str]):
     pass
 
 
-class ChunksSlowStart(StringChunksMixin,
-                      BaseChunksSlowStartProducer[str],
-                      BaseIndependentConsumerStage[str]):
+class StringChunksSlowStart(StringChunksMixin,
+                            BaseChunksSlowStartProducer[str],
+                            BaseIndependentConsumerStage[str]):
     pass
 
 
-class ChunksSeparator(StringSeparatorMixin,
-                      BaseChunksSeparatorProducer[str],
-                      BaseIndependentConsumerStage[str]):
+class StringChunksSeparator(StringSeparatorMixin,
+                            BaseChunksSeparatorProducer[str],
+                            BaseIndependentConsumerStage[str]):
     pass
 
 
-class ChunksFirstSeparator(StringSeparatorMixin,
-                           BaseChunksFirstSeparatorProducer[str],
-                           BaseIndependentConsumerStage[str]):
+class StringChunksFirstSeparator(StringSeparatorMixin,
+                                 BaseChunksFirstSeparatorProducer[str],
+                                 BaseIndependentConsumerStage[str]):
     pass
 
 

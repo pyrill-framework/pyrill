@@ -1,12 +1,15 @@
+from typing import Optional
+
+from . import BaseStage
 from .base import BaseIndependentConsumerStage, BaseSource, FrameSkippedError
 from .chunks import (BaseChunksFirstSeparatorProducer,
                      BaseChunksSeparatorProducer, BaseChunksSlowStartProducer,
-                     BaseDataAccumulatorProducer, BaseSizedChunksProducer)
+                     BaseSizedChunksProducer)
 from .mappers import make_map
 
-__all__ = ['SizedChunksSource', 'ChunksSlowStartSource', 'ChunksSeparatorSource', 'ChunksFirstSeparatorSource',
-           'SizedChunks', 'ChunksSlowStart', 'ChunksSeparator', 'ChunksFirstSeparator', 'Decode',
-           'UnicodeChunks']
+__all__ = ['BytesSizedChunksSource', 'BytesChunksSlowStartSource', 'BytesChunksSeparatorSource',
+           'BytesChunksFirstSeparatorSource', 'BytesSizedChunks', 'BytesChunksSlowStart', 'BytesChunksSeparator',
+           'BytesChunksFirstSeparator', 'Decode', 'UnicodeChunks']
 
 
 class BytesChunksMixin:
@@ -23,45 +26,45 @@ class BytesSeparatorMixin(BytesChunksMixin):
 
 # Sources
 
-class SizedChunksSource(BytesChunksMixin, BaseSizedChunksProducer[bytes], BaseSource[bytes]):
+class BytesSizedChunksSource(BytesChunksMixin, BaseSizedChunksProducer[bytes], BaseSource[bytes]):
     pass
 
 
-class ChunksSlowStartSource(BytesChunksMixin, BaseChunksSlowStartProducer[bytes], BaseSource[bytes]):
+class BytesChunksSlowStartSource(BytesChunksMixin, BaseChunksSlowStartProducer[bytes], BaseSource[bytes]):
     pass
 
 
-class ChunksSeparatorSource(BytesSeparatorMixin, BaseChunksSeparatorProducer[bytes], BaseSource[bytes]):
+class BytesChunksSeparatorSource(BytesSeparatorMixin, BaseChunksSeparatorProducer[bytes], BaseSource[bytes]):
     pass
 
 
-class ChunksFirstSeparatorSource(BytesSeparatorMixin, BaseChunksFirstSeparatorProducer[bytes], BaseSource[bytes]):
+class BytesChunksFirstSeparatorSource(BytesSeparatorMixin, BaseChunksFirstSeparatorProducer[bytes], BaseSource[bytes]):
     pass
 
 
 # Middle stages
 
-class SizedChunks(BytesChunksMixin,
-                  BaseSizedChunksProducer[bytes],
-                  BaseIndependentConsumerStage[bytes]):
+class BytesSizedChunks(BytesChunksMixin,
+                       BaseSizedChunksProducer[bytes],
+                       BaseIndependentConsumerStage[bytes]):
     pass
 
 
-class ChunksSlowStart(BytesChunksMixin,
-                      BaseChunksSlowStartProducer[bytes],
-                      BaseIndependentConsumerStage[bytes]):
-    pass
-
-
-class ChunksSeparator(BytesSeparatorMixin,
-                      BaseChunksSeparatorProducer[bytes],
-                      BaseIndependentConsumerStage[bytes]):
-    pass
-
-
-class ChunksFirstSeparator(BytesSeparatorMixin,
-                           BaseChunksFirstSeparatorProducer[bytes],
+class BytesChunksSlowStart(BytesChunksMixin,
+                           BaseChunksSlowStartProducer[bytes],
                            BaseIndependentConsumerStage[bytes]):
+    pass
+
+
+class BytesChunksSeparator(BytesSeparatorMixin,
+                           BaseChunksSeparatorProducer[bytes],
+                           BaseIndependentConsumerStage[bytes]):
+    pass
+
+
+class BytesChunksFirstSeparator(BytesSeparatorMixin,
+                                BaseChunksFirstSeparatorProducer[bytes],
+                                BaseIndependentConsumerStage[bytes]):
     pass
 
 
@@ -82,26 +85,45 @@ def _get_valid_unicode_bytes(data: bytes, encoding='utf-8') -> bytes:
     return data
 
 
-class UnicodeChunks(BytesChunksMixin,
-                    BaseDataAccumulatorProducer[bytes],
-                    BaseIndependentConsumerStage[bytes]):
+class UnicodeChunks(BaseStage[bytes, bytes]):
+    _buffer: Optional[bytes] = None
+    _open_stream: bool = False
 
     def __init__(self, *args, encoding='utf-8', **kwargs):
         super(UnicodeChunks, self).__init__(*args, **kwargs)
 
         self.encoding = encoding
 
-    async def _next_chunk(self) -> bytes:
+    async def _mount(self):
+        self._buffer = None
+        self._open_stream = True
+        await super(UnicodeChunks, self)._mount()
+
+    async def _unmount(self):
+        self._buffer = None
+        self._open_stream = False
+        await super(UnicodeChunks, self)._unmount()
+
+    async def process_frame(self, frame: bytes) -> bytes:
         if self._buffer is None:
-            self._buffer = self.empty_buffer()
+            self._buffer = frame
+        else:
+            self._buffer += frame
 
         if len(self._buffer) == 0:
-            raise FrameSkippedError()
+            if not self._open_stream:
+                raise StopAsyncIteration()
+            else:
+                raise FrameSkippedError()
 
         result = _get_valid_unicode_bytes(self._buffer)
 
         if len(result) == 0:
-            raise FrameSkippedError()
+            if not self._open_stream:
+                self._buffer = self._buffer[:0]
+                raise StopAsyncIteration()
+            else:
+                raise FrameSkippedError()
 
         self._buffer = self._buffer[len(result):]
 

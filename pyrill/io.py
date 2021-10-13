@@ -1,7 +1,11 @@
 from asyncio import Condition, Future, IncompleteReadError
 from pathlib import Path
-from typing import (IO, AnyStr, Dict, Generic, Iterable, Optional, Protocol,
-                    TypeVar)
+from typing import IO, AnyStr, Dict, Generic, Iterable, Optional, TypeVar
+
+try:
+    from typing import Protocol
+except ImportError:
+    from typing_extensions import Protocol
 
 from .base import BaseSink, BaseSource
 
