@@ -120,14 +120,18 @@ class BaseElement(ABC):
             if self._state == ElementState.ERROR:
                 return
             self.log('Setting error', lvl=DEBUG)
-            await self._unmount()
-            self._state = ElementState.ERROR
-            self._last_error = ex
-            self.log('Error set', lvl=DEBUG)
             try:
-                self._send_message(self._build_message(BUS_MSG_ELEMENT_ERROR, ex=ex))
+                await self._unmount()
             except Exception:
                 pass
+            finally:
+                self._state = ElementState.ERROR
+                self._last_error = ex
+                self.log('Error set', lvl=DEBUG)
+                try:
+                    self._send_message(self._build_message(BUS_MSG_ELEMENT_ERROR, ex=ex))
+                except Exception:
+                    pass
 
     async def mount(self):
         if self._state == ElementState.ERROR:
@@ -320,28 +324,20 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
     async def _consume_all(self):
         await self.mount()
 
-        async with AsyncExitStack() as cm:
-            [await cm.enter_async_context(c) for c in self._context_managers]
-
-            while not self._consumer_fut.cancelled():
-                await self.consume_frame()
-
-    async def _inner_consume_all(self):
-        if self._consumer_fut is None:
-            return
-
         try:
-            await self._consumer_fut
-        except CancelledError:
-            pass
+            async with AsyncExitStack() as cm:
+                [await cm.enter_async_context(c) for c in self._context_managers]
+
+                while not self._consumer_fut.cancelled() and not self._consumer_fut.done():
+                    await self.consume_frame()
         except StopAsyncIteration:
-            self.log('Sink finished')
+            self.log('Consumer finished')
         except Exception as ex:
             await self._set_error(ex)
             raise
 
     def _stop_consumer(self):
-        if self._consumer_fut is None or self._consumer_fut.cancelled():
+        if self._consumer_fut is None or self._consumer_fut.done():
             return
         self._consumer_fut.cancel()
 
@@ -351,18 +347,9 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
 
         self._consumer_fut = ensure_future(self._consume_all(), loop=self._loop)
 
-        def on_done(fut):
-            if self._consumer_fut == fut:
-                self._consumer_fut = None
-
-        self._consumer_fut.add_done_callback(on_done)
-
-        ensure_future(self._inner_consume_all(), loop=self._loop)
-
     async def _unmount(self):
         if self._consumer_fut is not None:
-            if not self._consumer_fut.cancelled():
-                self._consumer_fut.cancel()
+            self._stop_consumer()
 
             try:
                 await self._consumer_fut
@@ -388,7 +375,7 @@ class BaseSink(BaseIndependentConsumer[Sink_co]):
             return
         try:
             await self._consumer_fut
-        except StopAsyncIteration:
+        except (StopAsyncIteration, RuntimeError, AssertionError):
             return
 
 
@@ -402,6 +389,11 @@ class BaseSource(BaseProducer[Source_co], ABC):
     @property
     def bus(self) -> 'Bus':
         return self._bus
+
+    async def _unmount(self):
+        self.bus.end_of_bus()
+
+        await super(BaseSource, self)._unmount()
 
 
 class BaseStage(BaseConsumer[Sink_co], BaseProducer[Source_co], ABC):
@@ -558,9 +550,12 @@ class Bus:
             ensure_future(consumer.unmount(), loop=self._loop)
             self._consumers.remove(consumer)
 
+    def end_of_bus(self):
+        [ensure_future(producer.end_of_bus(), loop=self._loop) for producer in self._producers]
+        [self.unpipe(consumer.src_bus) for consumer in self._consumers]
+
     def __del__(self):
         try:
-            [ensure_future(producer.end_of_bus(), loop=self._loop) for producer in self._producers]
-            [self.unpipe(consumer.src_bus) for consumer in self._consumers]
+            self.end_of_bus()
         except RuntimeError:
             pass
