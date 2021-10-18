@@ -52,21 +52,6 @@ class Queue(BaseQueue[Source_co], BaseIndependentConsumerStage[Source_co]):
             self.start_consumer()
         return await super(Queue, self)._next_frame()
 
-    async def _inner_consume_all(self):
-        await self.mount()
-
-        if self._consumer_fut is None:
-            return
-
-        try:
-            await self._consumer_fut
-        except StopAsyncIteration:
-            self.log('Sink finished')
-            return
-        except Exception as ex:
-            await self._set_error(ex)
-            raise
-
 
 class QueueSource(BaseQueue[Source_co], BaseSource[Source_co]):
     pass
