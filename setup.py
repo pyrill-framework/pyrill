@@ -12,18 +12,16 @@ PACKAGE_REPOSITORY = os.environ['PACKAGE_REPOSITORY']
 PACKAGE_AUTHOR_EMAIL = os.environ['PACKAGE_AUTHOR_EMAIL']
 PACKAGE_AUTHOR = os.environ['PACKAGE_AUTHOR']
 
-VERSION_TAGS = ('__version__', '__version_info__', 'VERSION')
+version_file = Path(__file__).parent / PACKAGE_DIR / '__version__.py'
 
-init_file = Path(__file__).parent / PACKAGE_DIR / '__init__.py'
-
-version = setup_utils.get_version_from_file(init_file)
+version = setup_utils.get_version_from_file(version_file)
 
 if os.environ.get('PACKAGE_DEVELOPMENT') is not None:
-    version = setup_utils.get_development_version_from_file(init_file,
+    version = setup_utils.get_development_version_from_file(version_file,
                                                             int(os.environ.get('PACKAGE_DEVELOPMENT')),
                                                             os.environ.get('PACKAGE_COMMIT'))
 
-    setup_utils.set_version_to_file(init_file, version)
+    setup_utils.set_version_to_file(version_file, version)
 
 requirements = setup_utils.get_requirements_from_file(Path(__file__).parent / 'requirements.txt')
 
@@ -40,6 +38,7 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
         'Development Status :: 4 - Beta'],
     packages=find_packages(include=[f'{PACKAGE_DIR}*']),
     install_requires=requirements,
