@@ -52,14 +52,14 @@ def get_version_from_file(fl: Path, **kwargs) -> str:
 def get_development_version_from_file(fl: Path, rev_count: int = None, commit: str = None, **kwargs) -> str:
     version = get_version_from_file(fl, **kwargs)
     if rev_count is not None:
-        lvl = 'b'
+        lvl = '-beta'
         suffix = ''
 
         if commit is not None:
-            lvl = 'a'
+            lvl = '-alpha'
             suffix = f'+git{commit[:7]}'
 
-        version = f'{version}{lvl}{rev_count}{suffix}'
+        version = f'{version}{lvl}.{rev_count}{suffix}'
 
     return version
 
@@ -145,6 +145,7 @@ if __name__ == '__main__':
     except ImportError:
         print('Click is not installed!')
     else:
+        version_file = Path(__file__).parent / os.environ['PACKAGE_DIR'] / '__version__.py'
 
         @click.group()
         def cli():
@@ -153,7 +154,7 @@ if __name__ == '__main__':
         @cli.command(name='get-version')
         @click.argument('file',
                         type=click.Path(),
-                        default=Path(__file__).parent / os.environ['PACKAGE_DIR'] / '__init__.py',
+                        default=version_file,
                         required=False)
         def cli_get_version(file):
             file = Path(file)
@@ -171,7 +172,7 @@ if __name__ == '__main__':
                       help='New version to set')
         @click.argument('file',
                         type=click.Path(),
-                        default=Path(__file__).parent / os.environ['PACKAGE_DIR'] / '__init__.py',
+                        default=version_file,
                         required=False)
         def cli_set_version(file, version):
             file = Path(file)
@@ -189,7 +190,7 @@ if __name__ == '__main__':
                       help='Which version number to increase')
         @click.argument('file',
                         type=click.Path(),
-                        default=Path(__file__).parent / os.environ['PACKAGE_DIR'] / '__init__.py',
+                        default=version_file,
                         required=False)
         def cli_increase_version(file, level):
             file = Path(file)
@@ -215,7 +216,7 @@ if __name__ == '__main__':
                       envvar='PACKAGE_DEVELOPMENT')
         @click.argument('file',
                         type=click.Path(),
-                        default=Path(__file__).parent / os.environ['PACKAGE_DIR'] / '__init__.py',
+                        default=version_file,
                         required=False)
         def cli_set_development_version(file, commit, build):
             file = Path(file)

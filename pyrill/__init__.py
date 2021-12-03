@@ -1,3 +1,4 @@
+from .__version__ import __version__  # noqa
 from .accumulators import *  # noqa
 from .base import *  # noqa
 from .bus import *  # noqa
@@ -15,5 +16,3 @@ from .sources import *  # noqa
 from .strings import *  # noqa
 from .strlike import *  # noqa
 from .utils import *  # noqa
-
-__version__ = '0.1.4'

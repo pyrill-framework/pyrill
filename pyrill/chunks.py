@@ -17,7 +17,7 @@ class BaseDataChunkProducer(BaseProducer[AnyStr], ABC):
         super(BaseDataChunkProducer, self).__init__(*args, **kwargs)
 
         self._open_buffer = False
-        self._condition = Condition(loop=self._loop)
+        self._condition = Condition()
 
     @classmethod
     @abstractmethod
