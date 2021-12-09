@@ -1,5 +1,5 @@
 from abc import ABC
-from asyncio import Future
+from asyncio import Future, ensure_future, gather
 from typing import Optional, Union, cast
 
 from .base import BaseSink, FrameSkippedError, Sink_co, Source_co
@@ -14,6 +14,13 @@ class BaseOneFrameSink(BaseSink[Sink_co], ABC):
         self._frame_fut = Future()
 
         await super(BaseOneFrameSink, self)._mount()
+
+    async def _unmount(self):
+        if not self._frame_fut.done():
+            self._frame_fut.cancel()
+        ensure_future(gather(self._frame_fut, return_exceptions=True))
+
+        await super(BaseOneFrameSink, self)._unmount()
 
     def reset_frame(self):
         self._frame_fut = None
@@ -41,7 +48,6 @@ class First(BaseOneFrameSink[Sink_co]):
         except StopAsyncIteration:
             if not self._frame_fut.done():
                 self._frame_fut.set_exception(ValueError())
-            await self.unmount()
             raise
 
 
@@ -73,11 +79,9 @@ class Last(BaseOneFrameSink[Sink_co]):
             if not self._frame_fut.done():
                 if self._previous_frame is self.EMPTY:
                     self._frame_fut.set_exception(ValueError())
-                    raise ValueError(None)
                 else:
                     self._frame_fut.set_result(cast(Sink_co, self._previous_frame))
                     return cast(Sink_co, self._previous_frame)
-            await self.unmount()
             raise
         except FrameSkippedError:
             raise

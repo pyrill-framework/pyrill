@@ -164,6 +164,8 @@ class BaseElement(ABC):
             raise
 
     def log(self, msg, *, lvl=INFO, **kwargs):
+        if lvl < INFO:
+            return
         try:
             self._send_message(self._build_message(BUS_MSG_LOG, message=msg, level=lvl, **kwargs))
         except Exception:
@@ -323,18 +325,19 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
 
     async def _consume_all(self):
         await self.mount()
-
         try:
             async with AsyncExitStack() as cm:
                 [await cm.enter_async_context(c) for c in self._context_managers]
 
-                while not self._consumer_fut.cancelled() and not self._consumer_fut.done():
+                while True:
                     await self.consume_frame()
         except StopAsyncIteration:
             self.log('Consumer finished')
         except Exception as ex:
             await self._set_error(ex)
             raise
+        finally:
+            ensure_future(self.unmount(), loop=self._loop)
 
     def _stop_consumer(self):
         if self._consumer_fut is None or self._consumer_fut.done():
@@ -350,11 +353,7 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
     async def _unmount(self):
         if self._consumer_fut is not None:
             self._stop_consumer()
-
-            try:
-                await self._consumer_fut
-            except BaseException:
-                pass
+            self._consumer_fut.add_done_callback(lambda fut: fut.exception())
 
         await super(BaseIndependentConsumer, self)._unmount()
 
@@ -375,7 +374,7 @@ class BaseSink(BaseIndependentConsumer[Sink_co]):
             return
         try:
             await self._consumer_fut
-        except (StopAsyncIteration, RuntimeError, AssertionError):
+        except StopAsyncIteration:
             return
 
 

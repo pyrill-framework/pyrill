@@ -90,7 +90,7 @@ flake:
 
 run-tests:
 	@echo "Running unit tests..."
-	nose2 --fail-fast --with-coverage --coverage-report term-missing --coverage=${PACKAGE_COVERAGE} --log-level ERROR
+	nose2 --fail-fast --with-coverage --coverage-report term-missing --coverage=${PACKAGE_COVERAGE} -vv
 
 prepush: flake run-tests
 
