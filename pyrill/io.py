@@ -259,6 +259,7 @@ class AsyncIOSink(IOSinkMixin[AsyncWriteStreamProtocol[AnyStr]], BaseSink[AnyStr
         self._sink.write_eof()
         self._sink.close()
         await self._sink.wait_closed()
+        await super(AsyncIOSink, self)._unmount()
 
     async def _consume_frame(self) -> AnyStr:
         data = await super(AsyncIOSink, self)._consume_frame()

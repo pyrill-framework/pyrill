@@ -1,5 +1,5 @@
 from abc import ABC
-from asyncio import InvalidStateError, ensure_future
+from asyncio import InvalidStateError, ensure_future, gather
 from asyncio.futures import Future
 from asyncio.locks import Lock
 from asyncio.tasks import wait
@@ -122,6 +122,7 @@ class Branch(BaseConsumer[Sink_co]):
 
         try:
             self._futs[key].set_exception(StopAsyncIteration())
+            ensure_future(gather(self._futs[key], return_exceptions=True), loop=self._loop)
             del self._futs[key]
         except (KeyError, InvalidStateError):
             pass
@@ -219,7 +220,7 @@ class Tee(BaseConsumer[Source_co]):
             await self.consume_frame()
         return await fut
 
-    def add_consumer(self, consumer: 'BaseConsumer[Source_co]') -> _InnerTeeProducer:
+    def add_consumer(self, consumer: 'BaseConsumer[Source_co]') -> 'BaseConsumer[Source_co]':
         inner = _InnerTeeProducer[Source_co](parent=self)
         inner >> consumer
         self._consumers.add(inner)
@@ -228,15 +229,20 @@ class Tee(BaseConsumer[Source_co]):
     def get_consumers(self) -> Set[_InnerTeeProducer[Source_co]]:
         return self._consumers.copy()
 
-    def remove_consumer(self, consumer: '_InnerTeeProducer'):
+    def remove_consumer(self, consumer: 'BaseConsumer[Source_co]'):
+        inner_producer: _InnerTeeProducer[Source_co] = cast(_InnerTeeProducer[Source_co], consumer.source)
+        self._remove_inner_producer(inner_producer)
+
+    def _remove_inner_producer(self, inner_producer: '_InnerTeeProducer[Source_co]'):
         try:
-            self._consumers.remove(consumer)
+            self._consumers.remove(inner_producer)
         except KeyError:
             pass
 
         try:
-            self._futs[consumer].set_exception(StopAsyncIteration())
-            del self._futs[consumer]
+            self._futs[inner_producer].set_exception(StopAsyncIteration())
+            ensure_future(gather(self._futs[inner_producer], return_exceptions=True), loop=self._loop)
+            del self._futs[inner_producer]
         except (KeyError, InvalidStateError):
             pass
 
@@ -247,7 +253,7 @@ class Tee(BaseConsumer[Source_co]):
         try:
             frame = await super(Tee, self).consume_frame()
         except StopAsyncIteration:
-            [self.remove_consumer(c) for c in self._consumers.copy()]
+            [self._remove_inner_producer(c) for c in self._consumers.copy()]
             raise
 
         for fut in self._futs.values():
@@ -256,6 +262,12 @@ class Tee(BaseConsumer[Source_co]):
         self._futs = {}
 
         return frame
+
+    async def _unmount(self):
+        [f.cancel() for f in self._futs.values() if not f.done()]
+        await gather(*self._futs.values(), return_exceptions=True)
+
+        await super(Tee, self)._unmount()
 
     def __rshift__(self, other: 'BaseElement') -> 'BaseElement':
         if isinstance(other, BaseConsumer):

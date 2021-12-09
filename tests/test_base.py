@@ -81,4 +81,4 @@ class BaseStageTestCase(IsolatedAsyncioTestCase):
         sink.consume_all()
 
         with self.assertRaises(ValueError):
-            await sink.wait_until_eos()
+            await sink.get_frame()
