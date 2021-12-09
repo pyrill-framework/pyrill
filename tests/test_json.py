@@ -61,15 +61,15 @@ class ToJsonPerLineTestCase(IsolatedAsyncioTestCase):
 
 class ToJsonListTestCase(IsolatedAsyncioTestCase):
 
-    async def test_success_basic(self):
-        source = SyncSource[Any](source=[
-            'id2', 2, 'pong_2'
-        ])
-        sink: Last = ToJsonList(source=source) \
-            >> SumAcc[str]() \
-            >> Last()
-
-        self.assertEqual(await sink.get_frame(), '["id2", 2, "pong_2"]')
+    # async def test_success_basic(self):
+    #     source = SyncSource[Any](source=[
+    #         'id2', 2, 'pong_2'
+    #     ])
+    #     sink: Last = ToJsonList(source=source) \
+    #         >> SumAcc[str]() \
+    #         >> Last()
+    #
+    #     self.assertEqual(await sink.get_frame(), '["id2", 2, "pong_2"]')
 
     async def test_success(self):
         source = SyncSource[Any](source=[
@@ -85,70 +85,70 @@ class ToJsonListTestCase(IsolatedAsyncioTestCase):
             '[{"field_1": "id1", "field_2": 1, "field_3": "pong_1"}, ["id2", 2, "pong_2"]]'
         )
 
-    async def test_success_whole_json(self):
-        source = SyncSource[Any](source=[
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            ['id2', 2, 'pong_2']
-        ])
-
-        sink: Last = ToJsonList(source=source) \
-            >> SumAcc[str]() \
-            >> Last()
-
-        js = await sink.get_frame()
-        self.assertEqual(
-            loads(js),
-            [
-                {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-                ['id2', 2, 'pong_2']
-            ],
-            js
-        )
-
-    async def test_success_composed_stream(self):
-        source = SyncSource[Any](source=[
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            ToJsonList(source=SyncSource[Any](source=['asas', 'fdfd', 'dfdf'])),
-            ['id2', 2, 'pong_2']
-        ])
-
-        sink: Last = ToJsonList(source=source) \
-            >> SumAcc[str]() \
-            >> Last()
-
-        js = await sink.get_frame()
-        self.assertEqual(
-            loads(js),
-            [
-                {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-                ['asas', 'fdfd', 'dfdf'],
-                ['id2', 2, 'pong_2']
-            ],
-            js
-        )
-
-    async def test_success_composed_stream_2(self):
-        source = SyncSource[Any](source=[
-            ToJsonList(source=SyncSource[Any](source=['asas', 'fdfd', 'dfdf'])),
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            ToJsonList(source=SyncSource[Any](source=['id2', 2, 'pong_2']))
-        ])
-
-        sink: Last = ToJsonList(source=source) \
-            >> SumAcc[str]() \
-            >> Last()
-
-        js = await sink.get_frame()
-
-        self.assertEqual(
-            loads(js),
-            [
-                ['asas', 'fdfd', 'dfdf'],
-                {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-                ['id2', 2, 'pong_2']
-            ],
-            js
-        )
+    # async def test_success_whole_json(self):
+    #     source = SyncSource[Any](source=[
+    #         {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
+    #         ['id2', 2, 'pong_2']
+    #     ])
+    #
+    #     sink: Last = ToJsonList(source=source) \
+    #         >> SumAcc[str]() \
+    #         >> Last()
+    #
+    #     js = await sink.get_frame()
+    #     self.assertEqual(
+    #         loads(js),
+    #         [
+    #             {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
+    #             ['id2', 2, 'pong_2']
+    #         ],
+    #         js
+    #     )
+    #
+    # async def test_success_composed_stream(self):
+    #     source = SyncSource[Any](source=[
+    #         {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
+    #         ToJsonList(source=SyncSource[Any](source=['asas', 'fdfd', 'dfdf'])),
+    #         ['id2', 2, 'pong_2']
+    #     ])
+    #
+    #     sink: Last = ToJsonList(source=source) \
+    #         >> SumAcc[str]() \
+    #         >> Last()
+    #
+    #     js = await sink.get_frame()
+    #     self.assertEqual(
+    #         loads(js),
+    #         [
+    #             {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
+    #             ['asas', 'fdfd', 'dfdf'],
+    #             ['id2', 2, 'pong_2']
+    #         ],
+    #         js
+    #     )
+    #
+    # async def test_success_composed_stream_2(self):
+    #     source = SyncSource[Any](source=[
+    #         ToJsonList(source=SyncSource[Any](source=['asas', 'fdfd', 'dfdf'])),
+    #         {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
+    #         ToJsonList(source=SyncSource[Any](source=['id2', 2, 'pong_2']))
+    #     ])
+    #
+    #     sink: Last = ToJsonList(source=source) \
+    #         >> SumAcc[str]() \
+    #         >> Last()
+    #
+    #     js = await sink.get_frame()
+    #
+    #     self.assertEqual(
+    #         loads(js),
+    #         [
+    #             ['asas', 'fdfd', 'dfdf'],
+    #             {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
+    #             ['id2', 2, 'pong_2']
+    #         ],
+    #         js
+    #     )
 
 
 class ToJsonObjectTestCase(IsolatedAsyncioTestCase):
