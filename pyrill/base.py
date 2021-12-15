@@ -323,7 +323,7 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
         self._consumer_fut: Optional[Future] = None
         self._context_managers = tuple(context_managers) if context_managers else tuple()
 
-    async def _consume_all(self):
+    async def _consume_all(self, unmount_on_stop=False):
         await self.mount()
         try:
             async with AsyncExitStack() as cm:
@@ -337,7 +337,8 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
             await self._set_error(ex)
             raise
         finally:
-            ensure_future(self.unmount(), loop=self._loop)
+            if unmount_on_stop:
+                ensure_future(self.unmount(), loop=self._loop)
 
     def _stop_consumer(self):
         if self._consumer_fut is None or self._consumer_fut.done():
@@ -359,6 +360,9 @@ class BaseIndependentConsumer(BaseConsumer[Sink_co]):
 
 
 class BaseSink(BaseIndependentConsumer[Sink_co]):
+
+    async def _consume_all(self, unmount_on_stop=True):
+        await super(BaseSink, self)._consume_all(unmount_on_stop=unmount_on_stop)
 
     def consume_all(self):
         self._start_consumer()
