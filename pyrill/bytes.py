@@ -4,6 +4,7 @@ from . import BaseStage
 from .base import BaseIndependentConsumerStage, BaseSource, FrameSkippedError
 from .chunks import (BaseChunksFirstSeparatorProducer,
                      BaseChunksSeparatorProducer, BaseChunksSlowStartProducer,
+                     BaseDataChunkProducerIndependentConsumerMixin,
                      BaseSizedChunksProducer)
 from .mappers import make_map
 
@@ -45,24 +46,28 @@ class BytesChunksFirstSeparatorSource(BytesSeparatorMixin, BaseChunksFirstSepara
 # Middle stages
 
 class BytesSizedChunks(BytesChunksMixin,
+                       BaseDataChunkProducerIndependentConsumerMixin[bytes],
                        BaseSizedChunksProducer[bytes],
                        BaseIndependentConsumerStage[bytes]):
     pass
 
 
 class BytesChunksSlowStart(BytesChunksMixin,
+                           BaseDataChunkProducerIndependentConsumerMixin[bytes],
                            BaseChunksSlowStartProducer[bytes],
                            BaseIndependentConsumerStage[bytes]):
     pass
 
 
 class BytesChunksSeparator(BytesSeparatorMixin,
+                           BaseDataChunkProducerIndependentConsumerMixin[bytes],
                            BaseChunksSeparatorProducer[bytes],
                            BaseIndependentConsumerStage[bytes]):
     pass
 
 
 class BytesChunksFirstSeparator(BytesSeparatorMixin,
+                                BaseDataChunkProducerIndependentConsumerMixin[bytes],
                                 BaseChunksFirstSeparatorProducer[bytes],
                                 BaseIndependentConsumerStage[bytes]):
     pass
