@@ -1,6 +1,7 @@
 from .base import BaseIndependentConsumerStage, BaseSource
 from .chunks import (BaseChunksFirstSeparatorProducer,
                      BaseChunksSeparatorProducer, BaseChunksSlowStartProducer,
+                     BaseDataChunkProducerIndependentConsumerMixin,
                      BaseSizedChunksProducer)
 from .mappers import make_map
 
@@ -43,18 +44,21 @@ class StringChunksFirstSeparatorSource(StringSeparatorMixin, BaseChunksFirstSepa
 # Middle stages
 
 class StringSizedChunks(StringChunksMixin,
+                        BaseDataChunkProducerIndependentConsumerMixin[str],
                         BaseSizedChunksProducer[str],
                         BaseIndependentConsumerStage[str]):
     pass
 
 
 class StringChunksSlowStart(StringChunksMixin,
+                            BaseDataChunkProducerIndependentConsumerMixin[str],
                             BaseChunksSlowStartProducer[str],
                             BaseIndependentConsumerStage[str]):
     pass
 
 
 class StringChunksSeparator(StringSeparatorMixin,
+                            BaseDataChunkProducerIndependentConsumerMixin[str],
                             BaseChunksSeparatorProducer[str],
                             BaseIndependentConsumerStage[str]):
 
@@ -68,6 +72,7 @@ class StringChunksSeparator(StringSeparatorMixin,
 
 
 class StringChunksFirstSeparator(StringSeparatorMixin,
+                                 BaseDataChunkProducerIndependentConsumerMixin[str],
                                  BaseChunksFirstSeparatorProducer[str],
                                  BaseIndependentConsumerStage[str]):
     pass

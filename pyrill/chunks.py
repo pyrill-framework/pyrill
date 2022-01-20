@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from asyncio import Condition
 from datetime import datetime
-from typing import AnyStr, Optional, Union
+from typing import AnyStr, Generic, Optional, Union
 
 from .base import BaseProducer, BaseStage, FrameSkippedError
 
@@ -61,15 +61,24 @@ class BaseDataChunkProducer(BaseProducer[AnyStr], ABC):
             except FrameSkippedError:
                 pass
 
+    @abstractmethod
+    async def _next_chunk(self) -> AnyStr:
+        raise NotImplementedError()
+
+
+class BaseDataChunkProducerIndependentConsumerMixin(Generic[AnyStr]):
+    async def _next_frame(self) -> AnyStr:
+        while True:
+            try:
+                return await self._next_chunk()
+            except FrameSkippedError:
+                pass
+
             if not self._open_buffer:
                 continue
 
             async with self._condition:
                 await self._condition.wait()
-
-    @abstractmethod
-    async def _next_chunk(self) -> AnyStr:
-        raise NotImplementedError()
 
 
 class BaseDataAccumulatorProducer(BaseDataChunkProducer[AnyStr], ABC):
