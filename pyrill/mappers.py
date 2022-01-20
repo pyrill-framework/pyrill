@@ -1,5 +1,6 @@
+from abc import abstractmethod
 from inspect import Parameter, isawaitable, signature
-from typing import Any, Awaitable, Callable, Dict, Union
+from typing import Any, Awaitable, Callable, Dict, Type, Union
 
 try:
     from typing import Protocol
@@ -18,6 +19,7 @@ class BaseMap(BaseStage[Sink_co, Source_co]):
 
         self._skip_errors = skip_errors
 
+    @abstractmethod
     def _map_func(self, frame: Source_co) -> Sink_co:  # pragma: nocover
         raise NotImplementedError()
 
@@ -37,6 +39,10 @@ class BaseMap(BaseStage[Sink_co, Source_co]):
 
 
 class Map(BaseMap[Sink_co, Source_co]):
+    """
+    Mapper elements. It maps input to output using :param:`map_func`.
+    """
+
     map_func: Callable[[Sink_co], Union[Awaitable[Source_co], Source_co]]
 
     def __init__(self, *args, map_func: Callable[[Sink_co], Union[Awaitable[Source_co], Source_co]], **kwargs):
@@ -68,7 +74,7 @@ class MapCallback(Protocol[Source_co, Sink_co]):  # pragma: nocover
         pass
 
 
-def make_map(func: MapCallback[Source_co, Sink_co]):
+def make_map(func: MapCallback[Source_co, Sink_co]) -> Type[BaseMap[Source_co, Sink_co]]:
     class Mapper(BaseMap[Source_co, Sink_co]):
 
         def __init__(self, *args, **kwargs):

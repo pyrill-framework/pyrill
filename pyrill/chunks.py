@@ -61,6 +61,9 @@ class BaseDataChunkProducer(BaseProducer[AnyStr], ABC):
             except FrameSkippedError:
                 pass
 
+            if not self._open_buffer:
+                continue
+
             async with self._condition:
                 await self._condition.wait()
 

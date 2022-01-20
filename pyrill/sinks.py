@@ -81,11 +81,11 @@ class Last(BaseOneFrameSink[Sink_co]):
                     self._frame_fut.set_exception(ValueError())
                 else:
                     self._frame_fut.set_result(cast(Sink_co, self._previous_frame))
-                    return cast(Sink_co, self._previous_frame)
             raise
         except FrameSkippedError:
             raise
         except BaseException as ex:
+
             self._frame_fut.set_exception(ex)
             raise
 

@@ -1,8 +1,10 @@
 from unittest import IsolatedAsyncioTestCase
 
+from pyrill.accumulators import ListAcc
 from pyrill.base import ElementState
+from pyrill.sinks import Last
 from pyrill.sources import SyncSource
-from pyrill.strings import Encode, Lower, Upper
+from pyrill.strings import Encode, Lower, StringChunksSeparator, Upper
 
 
 class LowerTestCase(IsolatedAsyncioTestCase):
@@ -104,3 +106,21 @@ class EncodeTestCase(IsolatedAsyncioTestCase):
         await stage.unmount()
 
         self.assertEqual(result, [b'text', b'to', b'no ASCII text ', b'encode'])
+
+
+class StringChunksSeparatorTestCase(IsolatedAsyncioTestCase):
+
+    async def test_success(self):
+        source = SyncSource(source=['text\n',
+                                    't\no',
+                                    'en\nco\nde'])
+
+        stage = StringChunksSeparator(source=source) >> ListAcc() >> Last()
+
+        result = await stage.get_frame()
+
+        self.assertEqual(result, ['text\n',
+                                  't\n',
+                                  'oen\n',
+                                  'co\n',
+                                  'de'])
