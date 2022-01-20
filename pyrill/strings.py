@@ -57,7 +57,14 @@ class StringChunksSlowStart(StringChunksMixin,
 class StringChunksSeparator(StringSeparatorMixin,
                             BaseChunksSeparatorProducer[str],
                             BaseIndependentConsumerStage[str]):
-    pass
+
+    async def _consume_frame(self) -> str:
+        try:
+            return await super(StringChunksSeparator, self)._consume_frame()
+        except StopAsyncIteration:
+            self._open_buffer = False
+            await self._notify()
+            raise
 
 
 class StringChunksFirstSeparator(StringSeparatorMixin,
