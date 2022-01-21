@@ -1,7 +1,7 @@
 from typing import Any, List
 from unittest import IsolatedAsyncioTestCase
 
-from pyrill.accumulators import Count, ListAcc, Size, SumAcc
+from pyrill.accumulators import Count, ListAcc, SetAcc, Size, SumAcc
 from pyrill.sources import SyncSource
 
 
@@ -49,6 +49,18 @@ class ListAccTestCase(IsolatedAsyncioTestCase):
         result = [t async for t in stage]
 
         self.assertEqual(result, [[2, ], [2, 56], [2, 56, 34]])
+
+
+class SetAccTestCase(IsolatedAsyncioTestCase):
+
+    async def test_success(self):
+        source = SyncSource[int](source=[2, 56, 2, 34])
+
+        stage = SetAcc(source=source)
+
+        result = [t async for t in stage]
+
+        self.assertEqual(result, [{2, }, {2, 56}, {2, 56}, {2, 56, 34}])
 
 
 class CountTestCase(IsolatedAsyncioTestCase):
