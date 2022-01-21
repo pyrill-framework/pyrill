@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Sized, TypeVar
+from typing import Any, List, Optional, Set, Sized, TypeVar
 
 from .base import BaseStage, Source_co
 
@@ -51,6 +51,29 @@ class ListAcc(BaseStage[Source_co, List[Source_co]]):
         if self._accum is None:  # pragma: no cover
             raise RuntimeError('Accumulator not initialized')
         self._accum.append(frame)
+
+        return self._accum.copy()
+
+
+class SetAcc(BaseStage[Source_co, Set[Source_co]]):
+
+    def __init__(self, *args, **kwargs):
+        super(SetAcc, self).__init__(*args, **kwargs)
+
+        self._accum: Optional[Set[Source_co]] = None
+
+    async def _mount(self):
+        self._accum = set()
+        await super(SetAcc, self)._mount()
+
+    async def _unmount(self):
+        self._accum = None
+        await super(SetAcc, self)._unmount()
+
+    async def process_frame(self, frame: Source_co) -> Set[Source_co]:
+        if self._accum is None:  # pragma: no cover
+            raise RuntimeError('Accumulator not initialized')
+        self._accum.add(frame)
 
         return self._accum.copy()
 
