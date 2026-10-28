@@ -1,87 +1,164 @@
-from unittest import IsolatedAsyncioTestCase
+from collections.abc import Awaitable, Callable
 
-from pyrill.mappers import Map, make_map
-from pyrill.sources import SyncSource
+from pyrill.mappers import BaseMap, Map, make_map
+from pyrill.sinks import Last
+from pyrill.sources import IterableSource
+
+# ---------------------------------------------------------------------------
+# TestMap
+# ---------------------------------------------------------------------------
 
 
-class MapTestCase(IsolatedAsyncioTestCase):
+class TestMap:
+    async def test_sync_func_transforms_single_frame(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[5])
+        stage: Map[int, int] = source >> Map[int, int](map_func=lambda x: x * 2)
+        await stage.mount()
 
-    async def test_success(self):
-        source = SyncSource(source=[1, 2, 3])
+        result = await stage.__anext__()
 
-        stage = Map(source=source, map_func=lambda x: x * 2)
+        assert result == 10
 
-        result = [t async for t in stage]
-
-        self.assertEqual(result, [2, 4, 6])
-
-    async def test_success_async(self):
-        source = SyncSource(source=[1, 2, 3])
-
-        async def map(x: int) -> int:
+    async def test_async_func_transforms_single_frame(self) -> None:
+        async def double(x: int) -> int:
             return x * 2
 
-        stage = Map(source=source, map_func=map)
+        source: IterableSource[int] = IterableSource(source=[7])
+        stage: Map[int, int] = source >> Map[int, int](map_func=double)
+        await stage.mount()
 
-        result = [t async for t in stage]
+        result = await stage.__anext__()
 
-        self.assertEqual(result, [2, 4, 6])
+        assert result == 14
+
+    async def test_all_frames_transformed_in_sequence(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        sink: Last[int] = (
+            source >> Map[int, int](map_func=lambda x: x * 10) >> Last[int]()
+        )
+
+        result = await sink.get_frame()
+
+        assert result == 30
+
+    async def test_map_func_stored_as_attribute(self) -> None:
+        func: Callable[[int], Awaitable[int] | int] = lambda x: x + 1
+        stage: Map[int, int] = Map[int, int](map_func=func)
+
+        assert stage.map_func is func
 
 
-class MakeMapTestCase(IsolatedAsyncioTestCase):
+# ---------------------------------------------------------------------------
+# TestMakeMap
+# ---------------------------------------------------------------------------
 
-    async def test_success(self):
-        source = SyncSource(source=[1, 2, 3])
 
-        @make_map
-        def map(x: int) -> int:
+class TestMakeMap:
+    async def test_returned_class_adopts_func_metadata(self) -> None:
+        """A docstring for metadata test."""
+
+        def transform(x: int) -> int:
+            """Doubles x."""
             return x * 2
 
-        stage = map(source=source)
+        Mapper = make_map(transform)
 
-        result = [t async for t in stage]
+        assert isinstance(Mapper, type)
+        assert issubclass(Mapper, BaseMap)
+        assert Mapper.__name__ == "transform"
+        assert Mapper.__qualname__ == transform.__qualname__
+        assert Mapper.__doc__ == "Doubles x."
+        assert Mapper.__module__ == transform.__module__
 
-        self.assertEqual(result, [2, 4, 6])
+    async def test_sync_func_transforms_single_frame(self) -> None:
+        def negate(x: int) -> int:
+            return -x
 
-    async def test_success_async(self):
-        source = SyncSource(source=[1, 2, 3])
+        Mapper = make_map(negate)
+        source: IterableSource[int] = IterableSource(source=[3])
+        stage: BaseMap[int, int] = source >> Mapper()
+        await stage.mount()
 
-        @make_map
-        async def map(x: int) -> int:
-            return x * 2
+        result = await stage.__anext__()
 
-        stage = map(source=source)
+        assert result == -3
 
-        result = [t async for t in stage]
+    async def test_async_func_transforms_single_frame(self) -> None:
+        async def increment(x: int) -> int:
+            return x + 1
 
-        self.assertEqual(result, [2, 4, 6])
+        Mapper = make_map(increment)
+        source: IterableSource[int] = IterableSource(source=[9])
+        stage: BaseMap[int, int] = source >> Mapper()
+        await stage.mount()
 
-    async def test_success_skip_exception(self):
-        source = SyncSource(source=[1, 2, 3])
+        result = await stage.__anext__()
 
-        @make_map
-        async def map(x: int) -> int:
-            if x % 2 == 0:
-                raise ValueError()
-            return x * 2
+        assert result == 10
 
-        stage = map(source=source, skip_errors=True)
+    async def test_all_frames_transformed_in_sequence(self) -> None:
+        def square(x: int) -> int:
+            return x * x
 
-        result = [t async for t in stage]
+        Mapper = make_map(square)
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        sink: Last[int] = source >> Mapper() >> Last[int]()
 
-        self.assertEqual(result, [2, 6])
+        result = await sink.get_frame()
 
-    async def test_success_force_stop(self):
-        source = SyncSource(source=[1, 2, 3])
+        assert result == 9
 
-        @make_map
-        async def map(x: int) -> int:
-            if x % 2 == 0:
-                raise StopAsyncIteration()
-            return x * 2
+    async def test_keyword_only_param_extracted_and_forwarded(self) -> None:
+        def scale(x: int, *, factor: int) -> int:
+            return x * factor
 
-        stage = map(source=source)
+        Mapper = make_map(scale)
+        source: IterableSource[int] = IterableSource(source=[4])
+        stage: BaseMap[int, int] = source >> Mapper(factor=3)
+        await stage.mount()
 
-        result = [t async for t in stage]
+        result = await stage.__anext__()
 
-        self.assertEqual(result, [2])
+        assert result == 12
+
+    async def test_multiple_keyword_only_params_forwarded(self) -> None:
+        def affine(x: int, *, scale: int, offset: int) -> int:
+            return x * scale + offset
+
+        Mapper = make_map(affine)
+        source: IterableSource[int] = IterableSource(source=[5])
+        stage: BaseMap[int, int] = source >> Mapper(scale=2, offset=1)
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == 11
+
+    async def test_keyword_only_param_with_default_needs_no_kwarg(self) -> None:
+        def add(x: int, *, delta: int = 100) -> int:
+            return x + delta
+
+        Mapper = make_map(add)
+        source: IterableSource[int] = IterableSource(source=[1])
+        stage: BaseMap[int, int] = source >> Mapper()
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == 101
+
+    async def test_non_keyword_only_params_not_consumed_from_kwargs(self) -> None:
+        call_args: list[tuple[int, int]] = []
+
+        def record(x: int, *, multiplier: int) -> int:
+            call_args.append((x, multiplier))
+            return x * multiplier
+
+        Mapper = make_map(record)
+        source: IterableSource[int] = IterableSource(source=[6])
+        stage: BaseMap[int, int] = source >> Mapper(multiplier=7)
+        await stage.mount()
+
+        await stage.__anext__()
+
+        assert call_args == [(6, 7)]

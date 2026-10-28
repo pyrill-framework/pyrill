@@ -1,0 +1,73 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Pull request checks
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the develop branch
+on:
+  pull_request:
+    branches:
+      - develop
+      - master
+      - main
+      - release/*
+  
+concurrency:
+  group: pr-code-${{ github.base_ref }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+  # A workflow run is made up of one or more jobs that can run sequentially or in parallel
+
+jobs:
+  validate:
+    name: Check Python style and run tests
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.14"]
+      fail-fast: true
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          
+      - uses: ./.github/actions/setup-repo
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install development requirements
+        run: |
+          uv sync --all-packages --all-groups
+
+      - name: Run checks
+        run: poe validate
+
+      - name: Coverage comment
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-xml-coverage-path: ./coverage.xml
+          junitxml-path: ./pytest.xml
+          unique-id-for-comment: ${{ matrix.python-version }}
+          title: Coverage for Python ${{ matrix.python-version }}
+
+  success-pr:
+    name: Success Pull Request
+    if: ${{ always() }}
+    needs:
+      - validate
+    permissions: {}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Job Status status and fail if they are red
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')}}
+        run: |
+          echo "Fail!"
+          exit 1
+      - name: Success
+        run: echo "Success!"
