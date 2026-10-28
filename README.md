@@ -70,6 +70,10 @@ and a catalog of every element, is at
 <https://pyrill-framework.readthedocs.io/stable/>. The same pages are in the
 [`docs/`](docs/source) folder.
 
+The [messages and monitoring guide](docs/source/guides/messages-and-monitoring.rst)
+explains how to observe lifecycle changes, rejected frames and file activity, and
+publish custom progress events through the pipeline's message bus.
+
 ## Project
 
 - Repository and issue tracker: <https://github.com/pyrill-framework/pyrill>

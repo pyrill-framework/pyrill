@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .base import (
-    BUS_MSG_FRAME_SKIPPED,
+    MSG_FRAME_SKIPPED,
     BaseProducer,
     BaseStage,
     FrameSkipped,
@@ -13,11 +13,21 @@ from .base import (
 
 __all__ = [
     "BaseChunksFirstSeparatorProducer",
+    "BaseChunksFirstSeparatorSource",
+    "BaseChunksFirstSeparatorStage",
     "BaseChunksSeparatorProducer",
+    "BaseChunksSeparatorSource",
+    "BaseChunksSeparatorStage",
     "BaseChunksSlowStartProducer",
+    "BaseChunksSlowStartSource",
+    "BaseChunksSlowStartStage",
     "BaseDataAccumulatorStage",
+    "BaseDataChunkProducer",
     "BaseDataChunkSource",
+    "BaseDataChunkStage",
     "BaseSizedChunksProducer",
+    "BaseSizedChunksSource",
+    "BaseSizedChunksStage",
     "SkipUntil",
 ]
 
@@ -1040,7 +1050,7 @@ class SkipUntil[AnyStr: (str, bytes)](BaseStage[AnyStr, AnyStr]):
             )
             with suppress(Exception):
                 self._send_message(
-                    self._build_message(BUS_MSG_FRAME_SKIPPED, frame=skipped_part)
+                    self._build_message(MSG_FRAME_SKIPPED, frame=skipped_part)
                 )
 
         self._skipped = True

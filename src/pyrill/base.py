@@ -21,17 +21,42 @@ from typing import Any, Protocol, Self, TypeVar, cast, get_args
 from uuid import uuid4
 from weakref import ref
 
-BUS_MSG_START_STREAM = "start-stream"
-BUS_MSG_STOP_STREAM = "stop-stream"
-BUS_MSG_RESET_STREAM = "reset-stream"
-BUS_MSG_FRAME_SKIPPED = "frame-skipped"
-BUS_MSG_LOG = "log"
-BUS_MSG_ELEMENT_READY = "element-ready"
-BUS_MSG_ELEMENT_NULL = "element-null"
-BUS_MSG_ELEMENT_ERROR = "element-error"
+__all__ = [
+    "MSG_ELEMENT_ERROR",
+    "MSG_ELEMENT_NULL",
+    "MSG_ELEMENT_READY",
+    "MSG_FRAME_SKIPPED",
+    "MSG_STREAM_START",
+    "MSG_STREAM_STOP",
+    "BaseConsumer",
+    "BaseDecoupledStage",
+    "BaseElement",
+    "BaseExternalSource",
+    "BaseFullSink",
+    "BaseParallelProducer",
+    "BaseProducer",
+    "BaseSink",
+    "BaseSource",
+    "BaseStage",
+    "ElementState",
+    "FrameSkipped",
+    "Message",
+    "MessageCallback",
+    "Pipeline",
+    "active_pipeline",
+]
+
+MSG_STREAM_START = "stream-start"
+MSG_STREAM_STOP = "stream-stop"
+MSG_FRAME_SKIPPED = "frame-skipped"
+MSG_ELEMENT_READY = "element-ready"
+MSG_ELEMENT_NULL = "element-null"
+MSG_ELEMENT_ERROR = "element-error"
 
 
-type MessageCallback = Callable[[BaseElement, Message], bool | tuple[bool, bool] | None]
+type MessageCallback = Callable[
+    [MessageBrokerMixin, Message], bool | tuple[bool, bool] | None
+]
 
 
 # Explicit variance: inferring it would depend on BaseProducer's own variance,
@@ -40,7 +65,7 @@ _T_contra = TypeVar("_T_contra", contravariant=True)
 _R_co = TypeVar("_R_co", covariant=True)
 
 
-class _ConsumerOf(Protocol[_T_contra, _R_co]):
+class _ConsumerOf(Protocol[_T_contra, _R_co]):  # pyright: ignore[reportInvalidTypeVarUse]
     def __rrshift__(self, other: BaseProducer[_T_contra], /) -> _R_co: ...
 
 
@@ -81,49 +106,17 @@ class FrameSkipped(BaseException):
         self.frame = frame
 
 
-class EndOfStream(StopAsyncIteration):
-    """
-    Exception that signals the end of a stream.
-
-    It is a subclass of :class:`StopAsyncIteration`, so raising it from ``_next_frame``
-    ends the stream exactly like ``StopAsyncIteration``: the element unmounts and the
-    iteration stops.
-
-    Usage:
-
-    .. code-block:: python
-
-        from pyrill.base import BaseSource, EndOfStream
-
-
-        class OneShot(BaseSource[str]):
-            done = False
-
-            async def _next_frame(self) -> str:
-                if self.done:
-                    raise EndOfStream()
-                self.done = True
-                return "only"
-
-
-        source = OneShot()
-
-        await source.mount()
-        frames = [frame async for frame in source]
-        # ["only"]
-    """
-
-
 @dataclass
 class Message:
     """
     Event published by an element on its pipeline bus.
 
-    Elements send messages when their state changes or when a frame is skipped. The
-    ``type`` is one of the ``BUS_MSG_*`` constants of this module (``"element-ready"``,
+    Elements send messages for lifecycle changes, stream activity and skipped frames.
+    The ``type`` can be a ``MSG_*`` constant of this module (``"element-ready"``,
     ``"element-null"``, ``"element-error"``, ``"frame-skipped"``, ...).
 
     :param sender: Name of the element that sent the message.
+    :param pipeline: Name of the originating pipeline.
     :param type: Message type, for example ``"element-ready"``.
     :param params: Extra data, for example ``{"frame": 3}`` or ``{"ex": error}``.
 
@@ -144,6 +137,7 @@ class Message:
     """
 
     sender: str
+    pipeline: str
     type: str
     params: dict[str, Any] = field(default_factory=dict[str, Any])
 
@@ -181,7 +175,58 @@ class ElementState(StrEnum):
     UNMOUNTING = "unmounting"
 
 
-class Pipeline:
+class MessageBrokerMixin:
+    def __init__(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ):
+        self._message_callbacks: list[tuple[MessageCallback, str | None]] = []
+
+        super().__init__(*args, **kwargs)
+
+    def _send_message_inner(self, message: Message) -> bool:
+        to_remove: list[tuple[MessageCallback, str | None]] = []
+        propagate = True
+        for callback, message_type in self._message_callbacks:
+            if message_type is None or message_type == message.type:
+                result = callback(self, message)
+                if result is None:
+                    continue
+                if not isinstance(result, tuple):
+                    result = (result, True)
+                remove, propagate = result
+                if remove:
+                    to_remove.append((callback, message_type))
+                if not propagate:
+                    break
+
+        for item in to_remove:
+            self._message_callbacks.remove(item)
+
+        return propagate
+
+    def _send_message(self, message: Message) -> None:
+        self._send_message_inner(message)
+
+    def add_message_callback(
+        self,
+        callback: MessageCallback,
+        message_type: str | None = None,
+    ) -> None:
+        """
+        Register a callback for messages on this element or pipeline.
+
+        The callback is called as ``callback(broker, message)`` for every message, or only
+        for those whose ``type`` equals ``message_type``. It may return ``None`` (keep it and
+        propagate), a bool ``remove`` or a tuple ``(remove, propagate)``; ``remove=True``
+        unregisters the callback and ``propagate=False`` stops the message from reaching the
+        pipeline and the remaining callbacks.
+        """
+        self._message_callbacks.append((callback, message_type))
+
+
+class Pipeline(MessageBrokerMixin):
     """
     Container that groups elements and gives them a logger, an event loop and a bus.
 
@@ -218,6 +263,8 @@ class Pipeline:
         logger: Logger | None = None,
         loop: AbstractEventLoop | None = None,
     ):
+        super().__init__()
+
         self.name = name or str(uuid4())
         self._logger = LoggerAdapter(
             logger or getLogger(name or __name__), {"pipeline": self.name}
@@ -255,10 +302,10 @@ class Pipeline:
 
     def send_message(self, message: Message) -> None:
         """
-        Receive a message from an element. Currently it only logs it at debug level.
+        Log a message at debug level and dispatch it to pipeline callbacks.
         """
         self._logger.debug("Sending message: %s", message)
-        # Here you would typically have logic to actually send the message to the appropriate handlers or producers
+        self._send_message(message)
 
     def create_orphan_task(self, coro: Coroutine[Any, Any, Any]) -> Task[Any]:
         """
@@ -276,7 +323,7 @@ active_pipeline: ContextVar[Pipeline] = ContextVar(
 )
 
 
-class BaseElement(ABC):
+class BaseElement(MessageBrokerMixin, ABC):
     """
     Base class of every element: name, pipeline, lifecycle state and message callbacks.
 
@@ -327,6 +374,8 @@ class BaseElement(ABC):
         *,
         pipeline: Pipeline | None = None,
     ):
+        super().__init__()
+
         self._pipeline = pipeline or active_pipeline.get()
 
         self.name = name or self.new_name()
@@ -335,8 +384,6 @@ class BaseElement(ABC):
         self._state = ElementState.NULL
         self._state_lock = Lock()
         self._last_error: BaseException | None = None
-
-        self._message_callbacks: list[tuple[MessageCallback, str | None]] = []
 
         self.pipeline.include_element(self)
 
@@ -364,47 +411,15 @@ class BaseElement(ABC):
         return "-".join([cls.__name__, str(uuid4())])
 
     def _build_message(self, type: str, **params: Any) -> Message:
-        return Message(sender=self.name, type=type, params=params)
+        return Message(
+            sender=self.name, pipeline=self.pipeline.name, type=type, params=params
+        )
 
     def _send_message(self, message: Message) -> None:
-        to_remove: list[tuple[MessageCallback, str | None]] = []
-        propagate = True
-        for callback, message_type in self._message_callbacks:
-            if message_type is None or message_type == message.type:
-                result = callback(self, message)
-                if result is None:
-                    continue
-                if not isinstance(result, tuple):
-                    result = (result, True)
-                remove, propagate = result
-                if remove:
-                    to_remove.append((callback, message_type))
-                if not propagate:
-                    break
-
-        for item in to_remove:
-            self._message_callbacks.remove(item)
-
-        if not propagate:
+        if not self._send_message_inner(message):
             return
 
         self.pipeline.send_message(message)
-
-    def add_message_callback(
-        self,
-        callback: MessageCallback,
-        message_type: str | None = None,
-    ) -> None:
-        """
-        Register a callback that receives the messages sent by this element.
-
-        The callback is called as ``callback(element, message)`` for every message, or only
-        for those whose ``type`` equals ``message_type``. It may return ``None`` (keep it and
-        propagate), a bool ``remove`` or a tuple ``(remove, propagate)``; ``remove=True``
-        unregisters the callback and ``propagate=False`` stops the message from reaching the
-        pipeline and the remaining callbacks.
-        """
-        self._message_callbacks.append((callback, message_type))
 
     async def _mount(self) -> None:
         """Mount the element. This method should be overridden by subclasses to implement custom mounting logic."""
@@ -425,9 +440,7 @@ class BaseElement(ABC):
                 self._last_error = ex
                 self._logger.debug("Error set")
                 with suppress(Exception):
-                    self._send_message(
-                        self._build_message(BUS_MSG_ELEMENT_ERROR, ex=ex)
-                    )
+                    self._send_message(self._build_message(MSG_ELEMENT_ERROR, ex=ex))
 
     async def mount(self) -> None:
         """
@@ -444,7 +457,7 @@ class BaseElement(ABC):
                 await self._mount()
                 self._state = ElementState.READY
                 self._logger.debug("Ready")
-                self._send_message(self._build_message(BUS_MSG_ELEMENT_READY))
+                self._send_message(self._build_message(MSG_ELEMENT_READY))
         except Exception as ex:
             await self._set_error(ex)
             raise
@@ -462,7 +475,7 @@ class BaseElement(ABC):
                 await self._unmount()
                 self._state = ElementState.NULL
                 self._logger.debug("Null state")
-                self._send_message(self._build_message(BUS_MSG_ELEMENT_NULL))
+                self._send_message(self._build_message(MSG_ELEMENT_NULL))
         except BaseException as ex:
             await self._set_error(ex)
             raise
@@ -527,7 +540,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
                 try:
                     while True:
                         try:
-                            return await self._next_frame()
+                            return await self._next_frame_wrapper()
                         except FrameSkipped as ex:
                             self._logger.debug(
                                 f"Skipped frame: {ex.frame!r}",
@@ -536,7 +549,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
                             with suppress(Exception):
                                 self._send_message(
                                     self._build_message(
-                                        BUS_MSG_FRAME_SKIPPED, frame=ex.frame
+                                        MSG_FRAME_SKIPPED, frame=ex.frame
                                     )
                                 )
 
@@ -556,6 +569,9 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
         if self._state is ElementState.READY:
             return
         raise RuntimeError("Element is not ready")
+
+    async def _next_frame_wrapper(self) -> Source_co:
+        return await self._next_frame()
 
     @abstractmethod
     async def _next_frame(self) -> Source_co:  # pragma: nocover
@@ -697,7 +713,7 @@ class BaseParallelProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC
                 return
             except FrameSkipped as ex:
                 self._send_message(
-                    self._build_message(BUS_MSG_FRAME_SKIPPED, frame=ex.frame)
+                    self._build_message(MSG_FRAME_SKIPPED, frame=ex.frame)
                 )
                 continue
             except Exception as ex:  # noqa: BLE001
@@ -828,10 +844,11 @@ class BaseConsumer[Sink_co](BaseElement):
                 return await self._consume_frame()
             except FrameSkipped as ex:
                 self._send_message(
-                    self._build_message(BUS_MSG_FRAME_SKIPPED, frame=ex.frame)
+                    self._build_message(MSG_FRAME_SKIPPED, frame=ex.frame)
                 )
                 continue
             except StopAsyncIteration:
+                self._send_message(self._build_message(MSG_STREAM_STOP))
                 raise
             except Exception as ex:
                 await self._set_error(ex)
@@ -900,6 +917,31 @@ class BaseSource[Source_co](BaseProducer[Source_co], ABC):
         frames = [frame async for frame in source]
         # ["a", "b", "c"]
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+        self._initiated = False
+
+    async def _unmount(self) -> None:
+        await super()._unmount()
+        self._initiated = False
+
+    async def _ensure_ready(self) -> None:
+        await super()._ensure_ready()
+
+        if self._initiated is True:
+            return
+
+        self._send_message(self._build_message(MSG_STREAM_START))
+        self._initiated = True
+
+    async def _next_frame_wrapper(self) -> Source_co:
+        try:
+            return await self._next_frame()
+        except StopAsyncIteration:
+            self._send_message(self._build_message(MSG_STREAM_STOP))
+            raise
 
 
 class BaseExternalSource[Source_co](BaseSource[Source_co], ABC):

@@ -14,6 +14,7 @@ and change it.
     timing-and-flow
     custom-elements
     errors-and-retries
+    messages-and-monitoring
 
 :doc:`files-and-text`
     Read and write files in chunks, split them into lines and filter them, with
@@ -36,3 +37,7 @@ and change it.
 
 :doc:`errors-and-retries`
     Understand what happens when something fails, drop bad frames and retry.
+
+:doc:`messages-and-monitoring`
+    Subscribe to messages, monitor lifecycle and rejected frames, trace file
+    activity, and publish custom progress events.

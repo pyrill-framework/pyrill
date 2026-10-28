@@ -12,10 +12,13 @@ from .base import BaseStage, FrameSkipped
 __all__ = [
     "BaseFromCsv",
     "BaseToCsv",
+    "ColumnsDict",
     "DictFromCsv",
     "DictToCsv",
+    "FromCSVMapper",
     "ListFromCsv",
     "ListToCsv",
+    "ToCSVMapper",
 ]
 
 type ToCSVMapper = Callable[[Any], str | int | float]

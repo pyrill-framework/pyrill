@@ -5,7 +5,16 @@ from typing import Any, Concatenate, Protocol, cast, overload
 
 from .base import BaseStage
 
-__all__ = ["BaseMap", "Map", "make_map"]
+__all__ = [
+    "BaseMap",
+    "Map",
+    "MapCallback",
+    "MapFunc",
+    "MapperFunc",
+    "extract_kwargs",
+    "make_map",
+    "map",
+]
 
 
 type MapFunc[Sink_co, Source_co] = Callable[[Sink_co], Awaitable[Source_co] | Source_co]

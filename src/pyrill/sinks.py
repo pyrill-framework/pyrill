@@ -3,7 +3,12 @@ from typing import cast
 
 from .base import BaseFullSink, BaseSink
 
-__all__ = ["BaseOneFrameSink", "BlackHole", "First", "Last"]
+__all__ = [
+    "BaseOneFrameSink",
+    "BlackHole",
+    "First",
+    "Last",
+]
 
 
 class BaseOneFrameSink[Sink_co](BaseSink[Sink_co], ABC):

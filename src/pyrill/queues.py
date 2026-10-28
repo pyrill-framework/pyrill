@@ -10,7 +10,11 @@ from .base import (
     BaseSource,
 )
 
-__all__ = ["BaseQueue", "Queue", "QueueSource"]
+__all__ = [
+    "BaseQueue",
+    "Queue",
+    "QueueSource",
+]
 
 
 class BaseQueue[Source_co](BaseProducer[Source_co], ABC):

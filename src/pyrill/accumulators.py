@@ -3,7 +3,12 @@ from typing import Any
 
 from .base import BaseStage
 
-__all__ = ["Count", "ListAcc", "Size", "SumAcc"]
+__all__ = [
+    "Count",
+    "ListAcc",
+    "Size",
+    "SumAcc",
+]
 
 
 class SumAcc[AccData: (str, bytes, int, complex, float)](BaseStage[AccData, AccData]):

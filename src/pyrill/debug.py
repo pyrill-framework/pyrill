@@ -1,6 +1,12 @@
 from .base import FrameSkipped
 from .primitives import Noop
 
+__all__ = [
+    "BreakpointEnd",
+    "BreakpointFrame",
+    "BreakpointOnSkip",
+]
+
 
 class BreakpointFrame[Source_co](Noop[Source_co]):  # pragma: no cover
     """
