@@ -11,7 +11,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
-    "Typing :: Typed"
+    "Typing :: Typed",
 ]
 keywords = ["stream", "flow", "dataflow", "reactive"]
 
@@ -20,7 +20,6 @@ Repository = "https://github.com/pyrill-framework/pyrill"
 Homepage = "https://github.com/pyrill-framework/pyrill"
 Documentation = "https://pyrill-framework.readthedocs.io/stable/"
 Issues = "https://github.com/pyrill-framework/pyrill/issues"
-
 
 
 [build-system]
@@ -39,9 +38,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.17.3",
 ]
-docs = [
-    "sphinx>=9.2.0",
-]
+docs = ["sphinx>=9.2.0"]
 
 [tool.coverage.run]
 omit = [".venv/*"]
@@ -70,7 +67,7 @@ exclude_also = [
     "if TYPE_CHECKING",
 
     # Don't complain overloads, they aren't run:
-    "@overload"
+    "@overload",
 ]
 
 [tool.coverage.paths]
@@ -129,3 +126,7 @@ sequence = ["format", "lint:fix"]
 [tool.poe.tasks.docs]
 help = "Build the documentation"
 cmd = "sphinx-build -b html docs/source docs/build"
+
+[tool.poe.tasks."docs:clean"]
+help = "Clean the documentation build"
+cmd = "rm -rf docs/build"

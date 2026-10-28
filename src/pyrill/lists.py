@@ -3,7 +3,11 @@ from typing import Any
 
 from .base import BaseStage
 
-__all__ = ["FlatIterable", "GetItem", "GroupFrames"]
+__all__ = [
+    "FlatIterable",
+    "GetItem",
+    "GroupFrames",
+]
 
 
 class FlatIterable[Source_co](BaseStage[Iterable[Source_co], Source_co]):

@@ -10,7 +10,12 @@ from typing import Any
 
 from .base import BaseSource, ElementState
 
-__all__ = ["AsyncIterableSource", "IterableSource"]
+__all__ = [
+    "AsyncIterableSource",
+    "BuilderSource",
+    "IterableSource",
+    "builder",
+]
 
 
 class IterableSource[Source_co](BaseSource[Source_co]):

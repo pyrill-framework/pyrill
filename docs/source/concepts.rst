@@ -255,6 +255,22 @@ elements of the same pipeline:
 
     Cannot connect elements from different pipelines
 
+Messages
+--------
+
+A :class:`~pyrill.base.Message` reports an event about an element, such as becoming
+ready, starting or exhausting a source, entering an error state, skipping a frame,
+or opening a file. Frames flow
+through the connected elements; messages go to callbacks registered on the emitting
+element and then on its pipeline.
+
+Each message carries the originating element's name (``sender``), the pipeline
+name (``pipeline``), an event name (``type``), and event-specific data (``params``).
+Register a synchronous callback with ``element.add_message_callback(...)`` for one
+element, or ``pipeline.add_message_callback(...)`` for the pipeline. Use this for
+monitoring, diagnostics and application progress without consuming frames.
+See :doc:`guides/messages-and-monitoring` for runnable examples and event details.
+
 Types
 -----
 

@@ -15,7 +15,7 @@ from typing import (
 )
 
 from .base import (
-    BUS_MSG_ELEMENT_NULL,
+    MSG_ELEMENT_NULL,
     BaseConsumer,
     BaseDecoupledStage,
     BaseElement,
@@ -32,14 +32,26 @@ from .mappers import extract_kwargs
 
 __all__ = [
     "BaseBin",
+    "BaseFlat",
+    "BaseFlatMap",
     "Bin",
+    "BinBuilder",
+    "Flat",
+    "FlatMap",
+    "FutureSource",
+    "Gate",
+    "MapFunc",
     "Noop",
     "PrefixStream",
+    "Retry",
     "SkipIf",
     "SuffixStream",
     "Tee",
+    "Union",
     "Zip",
     "bin_stage",
+    "flat_map",
+    "shielded_push",
     "zip_sources",
 ]
 
@@ -332,7 +344,7 @@ class Tee[Source_co](BaseDecoupledStage[Source_co, Source_co]):
             lambda src, message: self._remove_consumer(
                 cast(FutureSource[Source_co], src)
             ),
-            BUS_MSG_ELEMENT_NULL,
+            MSG_ELEMENT_NULL,
         )
 
         return src

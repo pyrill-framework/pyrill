@@ -6,8 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrill.base import (
-    BUS_MSG_ELEMENT_NULL,
-    BUS_MSG_ELEMENT_READY,
+    MSG_ELEMENT_ERROR,
+    MSG_ELEMENT_NULL,
+    MSG_ELEMENT_READY,
+    MSG_FRAME_SKIPPED,
     BaseElement,
     BaseFullSink,
     BaseParallelProducer,
@@ -15,7 +17,6 @@ from pyrill.base import (
     BaseSink,
     BaseStage,
     ElementState,
-    EndOfStream,
     FrameSkipped,
     Message,
     Pipeline,
@@ -141,37 +142,29 @@ class TestFrameSkipped:
 
 
 # ---------------------------------------------------------------------------
-# TestEndOfStream
-# ---------------------------------------------------------------------------
-
-
-class TestEndOfStream:
-    def test_is_stop_async_iteration(self) -> None:
-        # Act
-        ex = EndOfStream()
-
-        # Assert
-        assert isinstance(ex, StopAsyncIteration)
-
-
-# ---------------------------------------------------------------------------
 # TestMessage
 # ---------------------------------------------------------------------------
 
 
 class TestMessage:
-    def test_stores_sender_type_and_params(self) -> None:
+    def test_stores_sender_pipeline_type_and_params(self) -> None:
         # Act
-        msg = Message(sender="elem-1", type="some-event", params={"key": "val"})
+        msg = Message(
+            sender="elem-1",
+            pipeline="pipe-1",
+            type="some-event",
+            params={"key": "val"},
+        )
 
         # Assert
         assert msg.sender == "elem-1"
+        assert msg.pipeline == "pipe-1"
         assert msg.type == "some-event"
         assert msg.params == {"key": "val"}
 
     def test_params_defaults_to_empty_dict(self) -> None:
         # Act
-        msg = Message(sender="elem-1", type="some-event")
+        msg = Message(sender="elem-1", pipeline="pipe-1", type="some-event")
 
         # Assert
         assert msg.params == {}
@@ -246,6 +239,69 @@ class TestPipeline:
         assert isinstance(task, asyncio.Task)
         assert task.done()
         assert executed == [True]
+
+
+class TestPipelineMessages:
+    def test_send_message_calls_matching_callback(self) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        callback = MagicMock(return_value=None)
+        pipeline.add_message_callback(callback, "some-event")
+        msg = Message(sender="elem-1", pipeline="test", type="some-event")
+
+        # Act
+        pipeline.send_message(msg)
+
+        # Assert
+        callback.assert_called_once_with(pipeline, msg)
+
+    def test_send_message_skips_callback_of_other_type(self) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        callback = MagicMock(return_value=None)
+        pipeline.add_message_callback(callback, "other-event")
+
+        # Act
+        pipeline.send_message(
+            Message(sender="elem-1", pipeline="test", type="some-event")
+        )
+
+        # Assert
+        callback.assert_not_called()
+
+    def test_send_message_logs_message_at_debug_level(self) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        msg = Message(sender="elem-1", pipeline="test", type="some-event")
+
+        # Act
+        with patch.object(pipeline, "_logger") as logger:
+            pipeline.send_message(msg)
+
+        # Assert
+        logger.debug.assert_called_once_with("Sending message: %s", msg)
+
+    async def test_element_message_reaches_pipeline_callback(self) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        element = ConcreteElement(name="elem-1", pipeline=pipeline)
+        received: list[Message] = []
+        pipeline.add_message_callback(
+            lambda _, msg: received.append(msg), MSG_ELEMENT_READY
+        )
+
+        # Act
+        await element.mount()
+
+        # Assert
+        assert received == [
+            Message(
+                sender="elem-1",
+                pipeline="test",
+                type=MSG_ELEMENT_READY,
+                params={},
+            )
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +391,7 @@ class TestBaseElementMount:
 
         # Assert
         assert element.state == ElementState.READY
-        assert any(m.type == BUS_MSG_ELEMENT_READY for m in messages)
+        assert any(m.type == MSG_ELEMENT_READY for m in messages)
 
     async def test_mount_is_idempotent(self) -> None:
         # Arrange
@@ -386,7 +442,7 @@ class TestBaseElementUnmount:
 
         # Assert
         assert element.state == ElementState.NULL
-        assert any(m.type == BUS_MSG_ELEMENT_NULL for m in messages)
+        assert any(m.type == MSG_ELEMENT_NULL for m in messages)
 
     async def test_unmount_is_noop_when_not_ready(self) -> None:
         # Arrange
@@ -405,7 +461,7 @@ class TestBaseElementMessageCallbacks:
         # Arrange
         element = ConcreteElement()
         callback = MagicMock(return_value=None)
-        element.add_message_callback(callback, BUS_MSG_ELEMENT_READY)
+        element.add_message_callback(callback, MSG_ELEMENT_READY)
 
         # Act
         await element.mount()
@@ -413,15 +469,15 @@ class TestBaseElementMessageCallbacks:
         # Assert
         callback.assert_called_once()
         _, msg = callback.call_args[0]
-        assert msg.type == BUS_MSG_ELEMENT_READY
+        assert msg.type == MSG_ELEMENT_READY
 
     async def test_callback_not_called_for_different_message_type(self) -> None:
         # Arrange
         element = ConcreteElement()
         callback = MagicMock(return_value=None)
-        element.add_message_callback(callback, BUS_MSG_ELEMENT_NULL)
+        element.add_message_callback(callback, MSG_ELEMENT_NULL)
 
-        # Act — mount sends BUS_MSG_ELEMENT_READY, not BUS_MSG_ELEMENT_NULL
+        # Act — mount sends MSG_ELEMENT_READY, not MSG_ELEMENT_NULL
         await element.mount()
 
         # Assert
@@ -443,7 +499,7 @@ class TestBaseElementMessageCallbacks:
         # Arrange
         element = ConcreteElement()
         callback = MagicMock(return_value=True)
-        element.add_message_callback(callback, BUS_MSG_ELEMENT_READY)
+        element.add_message_callback(callback, MSG_ELEMENT_READY)
         await element.mount()
         assert callback.call_count == 1
 
@@ -462,7 +518,7 @@ class TestBaseElementMessageCallbacks:
         pipeline = Pipeline("test")
         element = ConcreteElement(pipeline=pipeline)
         callback = MagicMock(return_value=(False, False))
-        element.add_message_callback(callback, BUS_MSG_ELEMENT_READY)
+        element.add_message_callback(callback, MSG_ELEMENT_READY)
 
         # Act
         with patch.object(pipeline, "send_message") as mock_send:
@@ -471,6 +527,138 @@ class TestBaseElementMessageCallbacks:
         # Assert
         callback.assert_called_once()
         mock_send.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("result", "stays_registered"),
+        [
+            (None, True),
+            (False, True),
+            ((False, True), True),
+            (True, False),
+            ((True, True), False),
+        ],
+    )
+    async def test_callback_result_controls_removal(
+        self, result: bool | tuple[bool, bool] | None, stays_registered: bool
+    ) -> None:
+        # Arrange
+        element = ConcreteElement()
+        callback = MagicMock(return_value=result)
+        element.add_message_callback(callback, MSG_ELEMENT_READY)
+        await element.mount()
+        await element.unmount()
+
+        # Act — second mount sends the same message type again
+        await element.mount()
+
+        # Assert
+        assert callback.call_count == (2 if stays_registered else 1)
+
+    async def test_callback_returning_true_false_removes_and_stops_propagation(
+        self,
+    ) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        element = ConcreteElement(pipeline=pipeline)
+        callback = MagicMock(return_value=(True, False))
+        element.add_message_callback(callback, MSG_ELEMENT_READY)
+        await element.mount()
+        await element.unmount()
+
+        # Act — second mount: callback should be gone and the message propagate
+        with patch.object(pipeline, "send_message") as mock_send:
+            await element.mount()
+
+        # Assert
+        callback.assert_called_once()
+        mock_send.assert_called_once()
+
+    async def test_callback_stopping_propagation_skips_later_callbacks(self) -> None:
+        # Arrange
+        element = ConcreteElement()
+        first = MagicMock(return_value=(False, False))
+        second = MagicMock(return_value=None)
+        element.add_message_callback(first, MSG_ELEMENT_READY)
+        element.add_message_callback(second, MSG_ELEMENT_READY)
+
+        # Act
+        await element.mount()
+
+        # Assert
+        first.assert_called_once()
+        second.assert_not_called()
+
+    async def test_callback_receives_element_and_message_with_origin(self) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        element = ConcreteElement(name="elem-1", pipeline=pipeline)
+        callback = MagicMock(return_value=None)
+        element.add_message_callback(callback, MSG_ELEMENT_READY)
+
+        # Act
+        await element.mount()
+
+        # Assert
+        callback.assert_called_once_with(
+            element,
+            Message(
+                sender="elem-1",
+                pipeline="test",
+                type=MSG_ELEMENT_READY,
+                params={},
+            ),
+        )
+
+    async def test_callback_not_propagated_message_does_not_reach_pipeline_callback(
+        self,
+    ) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        element = ConcreteElement(pipeline=pipeline)
+        element.add_message_callback(
+            MagicMock(return_value=(False, False)), MSG_ELEMENT_READY
+        )
+        pipeline_callback = MagicMock(return_value=None)
+        pipeline.add_message_callback(pipeline_callback, MSG_ELEMENT_READY)
+
+        # Act
+        await element.mount()
+
+        # Assert
+        pipeline_callback.assert_not_called()
+
+    async def test_mount_failure_sends_error_message_with_exception(self) -> None:
+        # Arrange
+        element = FailingMountElement(name="elem-1")
+        callback = MagicMock(return_value=None)
+        element.add_message_callback(callback, MSG_ELEMENT_ERROR)
+
+        # Act
+        with pytest.raises(ValueError, match="mount failed"):
+            await element.mount()
+
+        # Assert
+        callback.assert_called_once()
+        _, msg = callback.call_args[0]
+        assert msg.sender == "elem-1"
+        assert isinstance(msg.params["ex"], ValueError)
+
+    async def test_skipped_frame_sends_frame_skipped_message(self) -> None:
+        # Arrange
+        pipeline = Pipeline("test")
+        producer = SkippingProducer(pipeline=pipeline)
+        consumer = ConcreteSink(source=producer, pipeline=pipeline)
+        await consumer.mount()
+        received: list[Message] = []
+        pipeline.add_message_callback(
+            lambda _, msg: received.append(msg), MSG_FRAME_SKIPPED
+        )
+
+        # Act
+        await consumer.consume_frame()
+
+        # Assert
+        assert [m.params for m in received] == [{"frame": 0}]
 
 
 # ---------------------------------------------------------------------------

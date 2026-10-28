@@ -20,11 +20,13 @@ from .mappers import make_map
 __all__ = [
     "BytesChunksFirstSeparator",
     "BytesChunksFirstSeparatorSource",
+    "BytesChunksMixin",
     "BytesChunksSeparator",
     "BytesChunksSeparatorSource",
     "BytesChunksSlowStart",
     "BytesChunksSlowStartSource",
     "BytesDataAccumulator",
+    "BytesSeparatorMixin",
     "BytesSizedChunks",
     "BytesSizedChunksSource",
     "Decode",

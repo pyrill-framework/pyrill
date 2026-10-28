@@ -3,7 +3,15 @@ from typing import Any, cast
 
 from .mappers import BaseMap
 
-__all__ = ["Join", "LStrip", "RStrip", "Replace", "Split", "Strip"]
+__all__ = [
+    "BaseStripMap",
+    "Join",
+    "LStrip",
+    "RStrip",
+    "Replace",
+    "Split",
+    "Strip",
+]
 
 # These mappers are generic over str/bytes, so they are written as classes:
 # make_map cannot keep a generic function generic for mypy.
