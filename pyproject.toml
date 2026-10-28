@@ -1,0 +1,131 @@
+[project]
+name = "pyrill"
+version = "0.2.0"
+description = "Asynchronous streams for Python"
+readme = "README.md"
+authors = [{ name = "Alfred", email = "alfred82santa@gmail.com" }]
+requires-python = ">=3.14"
+dependencies = []
+license = { text = "LGPL-2.1-or-later" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed"
+]
+keywords = ["stream", "flow", "dataflow", "reactive"]
+
+[project.urls]
+Repository = "https://github.com/pyrill-framework/pyrill"
+Homepage = "https://github.com/pyrill-framework/pyrill"
+Documentation = "https://pyrill-framework.readthedocs.io/stable/"
+Issues = "https://github.com/pyrill-framework/pyrill/issues"
+
+
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
+
+
+[tool.pytest]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.3",
+]
+docs = [
+    "sphinx>=9.2.0",
+]
+
+[tool.coverage.run]
+omit = [".venv/*"]
+branch = true
+relative_files = false
+
+[tool.coverage.report]
+# Regexes for lines to exclude from consideration
+exclude_also = [
+    # Dont complain about missing debug-only code:
+    "def __repr__",
+    "if self\\.debug",
+
+    # Don't complain if tests don't hit defensive assertion code:
+    "raise AssertionError",
+    "raise NotImplementedError",
+
+    # Don't complain if non-runnable code isn't run:
+    "if 0:",
+    "if __name__ == .__main__.:",
+
+    # Don't complain about abstract methods, they aren't run:
+    "@(abc\\.)?abstractmethod",
+
+    # Don't complain type checking imports, they aren't run:
+    "if TYPE_CHECKING",
+
+    # Don't complain overloads, they aren't run:
+    "@overload"
+]
+
+[tool.coverage.paths]
+source = ["src/"]
+
+[tool.poe]
+envfile = [".env", ".env.local"]
+executor = "uv"
+
+[tool.poe.tasks]
+build = "uv build"
+test = "pytest -v -s --junitxml=pytest.xml --cov src --cov-report term-missing --cov-report xml:coverage.xml --cov-fail-under=85 --exitfirst"
+typecheck = "mypy src"
+format = "ruff format src/**/*.py tests/**/*.py"
+"format:check" = "ruff format src/**/*.py tests/**/*.py --check"
+lint = "ruff check src/**/*.py tests/**/*.py"
+"lint:fix" = "ruff check src/**/*.py tests/**/*.py --fix"
+
+[tool.poe.tasks.clean]
+cmd = """
+rm -rf ./**/src/**/*.pyc
+       ./**/src/**/*.pyo
+       ./**/src/**/__pycache__
+       ./**/tests/**/*.pyc
+       ./**/tests/**/*.pyo
+       ./**/tests/**/__pycache__
+       .coverage
+       coverage.xml
+       pytest.xml
+       .*_cache
+"""
+empty_glob = "null"
+
+[tool.poe.tasks.validate]
+help = "Execute all validations: typecheck, lint, and test"
+sequence = ["typecheck", "format:check", "lint", "test"]
+
+[tool.poe.tasks.prebuild]
+help = "Pre-build checks: typecheck and lint"
+sequence = ["typecheck", "lint"]
+
+[tool.poe.tasks."clean:all"]
+help = "Complete cleanup: cache, coverage, and temporary files"
+sequence = ["clean", { cmd = """rm -rf dist
+                      build
+                      .coverage
+                      coverage.xml
+                      pytest.xml
+                      **/.*_cache
+            """ }]
+
+[tool.poe.tasks.fix]
+help = "Fix linting and formatting issues, then run tests"
+sequence = ["format", "lint:fix"]
+
+[tool.poe.tasks.docs]
+help = "Build the documentation"
+cmd = "sphinx-build -b html docs/source docs/build"

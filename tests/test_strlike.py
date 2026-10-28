@@ -1,227 +1,261 @@
-from unittest import IsolatedAsyncioTestCase
+from typing import cast
 
-from pyrill.sources import SyncSource
+import pytest
+
+from pyrill.mappers import BaseMap
+from pyrill.sinks import Last
+from pyrill.sources import IterableSource
 from pyrill.strlike import Join, LStrip, Replace, RStrip, Split, Strip
 
+# ---------------------------------------------------------------------------
+# TestSplit
+# ---------------------------------------------------------------------------
 
-class SplitTestCase(IsolatedAsyncioTestCase):
 
-    async def test_success(self):
-        source = SyncSource(source=['text to split'])
+class TestSplit:
+    async def test_splits_by_whitespace_when_no_sep_given(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["hello world"])
+        sink: Last[list[str]] = source >> Split() >> Last[list[str]]()
 
-        stage = Split[str, str](source=source, sep=' ')
+        result: list[str] = await sink.get_frame()
 
-        result = [t async for t in stage]
+        assert result == ["hello", "world"]
 
-        self.assertEqual(result, [['text', 'to', 'split']])
+    async def test_splits_by_explicit_separator(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["a,b,c"])
+        sink: Last[list[str]] = source >> Split(sep=",") >> Last[list[str]]()
 
-    async def test_success_with_maxsplit(self):
-        source = SyncSource(source=['text to split'])
+        result: list[str] = await sink.get_frame()
 
-        stage = Split[str, str](source=source, sep=' ', maxsplit=1)
+        assert result == ["a", "b", "c"]
 
-        result = [t async for t in stage]
+    async def test_maxsplit_limits_number_of_splits(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["a,b,c,d"])
+        sink: Last[list[str]] = (
+            source >> Split(sep=",", maxsplit=2) >> Last[list[str]]()
+        )
 
-        self.assertEqual(result, [['text', 'to split']])
+        result: list[str] = await sink.get_frame()
 
-    async def test_fail(self):
-        source = SyncSource(source=[1, 'text to split', 2])
+        assert result == ["a", "b", "c,d"]
 
-        stage = Split[str, str](source=source, sep=' ', maxsplit=1)
+    async def test_applied_to_each_frame_independently(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["a b", "c d"])
+        stage: BaseMap[str, list[str]] = source >> Split[str]()
+        await stage.mount()
 
-        with self.assertRaises(AttributeError):
-            [t async for t in stage]
+        first: list[str] = await stage.__anext__()
+        second: list[str] = await stage.__anext__()
 
+        assert first == ["a", "b"]
+        assert second == ["c", "d"]
 
-class JoinTestCase(IsolatedAsyncioTestCase):
+    async def test_works_with_bytes(self) -> None:
+        source: IterableSource[bytes] = IterableSource(source=[b"a:b:c"])
+        sink: Last[list[bytes]] = source >> Split(sep=b":") >> Last[list[bytes]]()
 
-    async def test_success(self):
-        source = SyncSource(source=[['text', 'to', 'join']])
+        result: list[bytes] = await sink.get_frame()
 
-        stage = Join[str, str](source=source, join_str=' ')
+        assert result == [b"a", b"b", b"c"]
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text to join')
-            i += 1
+    async def test_single_token_returns_one_element_list(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["hello"])
+        sink: Last[list[str]] = source >> Split() >> Last[list[str]]()
 
-        self.assertEqual(i, 1)
+        result: list[str] = await sink.get_frame()
 
-    async def test_fail(self):
-        source = SyncSource(source=['texttojoin',
-                                    1,
-                                    ['text', 'to', 'join']])
+        assert result == ["hello"]
 
-        stage = Join[str, str](source=source, join_str='')
 
-        with self.assertRaises(TypeError):
-            [t async for t in stage]
+# ---------------------------------------------------------------------------
+# TestJoin
+# ---------------------------------------------------------------------------
 
 
-class ReplaceTestCase(IsolatedAsyncioTestCase):
+class TestJoin:
+    async def test_joins_list_with_separator(self) -> None:
+        source: IterableSource[list[str]] = IterableSource(source=[["a", "b", "c"]])
+        sink: Last[str] = source >> Join(join_str=",") >> Last[str]()
 
-    async def test_success(self):
-        source = SyncSource(source=['text to replace to text',
-                                    'text 2 replace to text',
-                                    'text 2 replace 2 text'])
+        result: str = await sink.get_frame()
 
-        stage = Replace[str, str](source=source, old='to', new='2')
+        assert result == "a,b,c"
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text 2 replace 2 text')
-            i += 1
+    async def test_joins_with_empty_separator(self) -> None:
+        source: IterableSource[list[str]] = IterableSource(source=[["x", "y", "z"]])
+        sink: Last[str] = source >> Join(join_str="") >> Last[str]()
 
-        self.assertEqual(i, 3)
+        result: str = await sink.get_frame()
 
-    async def test_success_with_count(self):
-        source = SyncSource(source=['text to replace to text'])
+        assert result == "xyz"
 
-        stage = Replace[str, str](source=source, old='to', new='2', count=1)
+    async def test_joins_each_frame_independently(self) -> None:
+        source: IterableSource[list[str]] = IterableSource(
+            source=[["a", "b"], ["c", "d"]]
+        )
+        stage: BaseMap[list[str], str] = cast(
+            BaseMap[list[str], str], source >> Join(join_str="-")
+        )
+        await stage.mount()
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text 2 replace to text')
-            i += 1
+        first: str = await stage.__anext__()
+        second: str = await stage.__anext__()
 
-        self.assertEqual(i, 1)
+        assert first == "a-b"
+        assert second == "c-d"
 
-    async def test_fail(self):
-        source = SyncSource(source=['text to replace to text',
-                                    1,
-                                    'text 2 replace to text',
-                                    2,
-                                    'text 2 replace 2 text'])
+    async def test_join_str_none_raises_runtime_error(self) -> None:
+        source: IterableSource[list[str]] = IterableSource(source=[["a", "b"]])
+        stage: BaseMap[list[str], str] = cast(BaseMap[list[str], str], source >> Join())
+        await stage.mount()
 
-        stage = Replace[str, str](source=source, old='to', new='2')
+        with pytest.raises(RuntimeError, match="Join string must be set"):
+            await stage.__anext__()
 
-        with self.assertRaises(AttributeError):
-            [t async for t in stage]
+    async def test_works_with_bytes(self) -> None:
+        source: IterableSource[list[bytes]] = IterableSource(source=[[b"a", b"b"]])
+        sink: Last[bytes] = source >> Join(join_str=b":") >> Last[bytes]()
 
+        result: bytes = await sink.get_frame()
 
-class StripTestCase(IsolatedAsyncioTestCase):
+        assert result == b"a:b"
 
-    async def test_success(self):
-        source = SyncSource(source=['     text to strip      ',
-                                    '   \n text to strip   \n    ',
-                                    'text to strip'])
 
-        stage = Strip[str, str](source=source)
+# ---------------------------------------------------------------------------
+# TestReplace
+# ---------------------------------------------------------------------------
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text to strip')
-            i += 1
 
-        self.assertEqual(i, 3)
+class TestReplace:
+    async def test_replaces_all_occurrences_by_default(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["banana"])
+        sink: Last[str] = source >> Replace(old="a", new="o") >> Last[str]()
 
-    async def test_success_with_chars(self):
-        source = SyncSource(source=['aaabbbcccctext to stripcccbbbaaa',
-                                    'text to strip'])
+        result: str = await sink.get_frame()
 
-        stage = Strip[str, str](source=source, chars='abc')
+        assert result == "bonono"
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text to strip')
-            i += 1
+    async def test_count_limits_number_of_replacements(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["aaa"])
+        sink: Last[str] = source >> Replace(old="a", new="b", count=2) >> Last[str]()
 
-        self.assertEqual(i, 2)
+        result: str = await sink.get_frame()
 
-    async def test_fail(self):
-        source = SyncSource(source=['     text to strip      ',
-                                    1,
-                                    '   \n text to strip   \n    ',
-                                    2,
-                                    'text to strip'])
+        assert result == "bba"
 
-        stage = Strip[str, str](source=source)
+    async def test_new_none_deletes_occurrences(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["banana"])
+        sink: Last[str] = source >> Replace(old="a") >> Last[str]()
 
-        with self.assertRaises(AttributeError):
-            [t async for t in stage]
+        result: str = await sink.get_frame()
 
+        assert result == "bnn"
 
-class RStripTestCase(IsolatedAsyncioTestCase):
+    async def test_old_none_is_no_op(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["hello"])
+        sink: Last[str] = source >> Replace() >> Last[str]()
 
-    async def test_success(self):
-        source = SyncSource(source=['     text to strip      ',
-                                    '     text to strip \n          ',
-                                    '     text to strip'])
+        result: str = await sink.get_frame()
 
-        stage = RStrip[str, str](source=source)
+        assert result == "hello"
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, '     text to strip')
-            i += 1
+    async def test_works_with_bytes(self) -> None:
+        source: IterableSource[bytes] = IterableSource(source=[b"hello"])
+        sink: Last[bytes] = source >> Replace(old=b"l", new=b"r") >> Last[bytes]()
 
-        self.assertEqual(i, 3)
+        result: bytes = await sink.get_frame()
 
-    async def test_success_with_chars(self):
-        source = SyncSource(source=['aaabbbcccctext to stripcccbbbaaa',
-                                    'aaabbbcccctext to strip'])
+        assert result == b"herro"
 
-        stage = RStrip[str, str](source=source, chars='abc')
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'aaabbbcccctext to strip')
-            i += 1
+# ---------------------------------------------------------------------------
+# TestStrip
+# ---------------------------------------------------------------------------
 
-        self.assertEqual(i, 2)
 
-    async def test_fail(self):
+class TestStrip:
+    async def test_strips_whitespace_by_default(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["  hello  "])
+        sink: Last[str] = source >> Strip() >> Last[str]()
 
-        source = SyncSource(source=['     text to strip      ',
-                                    1,
-                                    '     text to strip \n          ',
-                                    2,
-                                    '     text to strip'])
+        result: str = await sink.get_frame()
 
-        stage = RStrip(source=source)
+        assert result == "hello"
 
-        with self.assertRaises(AttributeError):
-            [t async for t in stage]
+    async def test_strips_specified_chars_from_both_ends(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["--hello--"])
+        sink: Last[str] = source >> Strip(chars="-") >> Last[str]()
 
+        result: str = await sink.get_frame()
 
-class LStripTestCase(IsolatedAsyncioTestCase):
+        assert result == "hello"
 
-    async def test_success(self):
-        source = SyncSource(source=['     text to strip      ',
-                                    '   \n text to strip      ',
-                                    'text to strip      '])
+    async def test_works_with_bytes(self) -> None:
+        source: IterableSource[bytes] = IterableSource(source=[b"  hi  "])
+        sink: Last[bytes] = source >> Strip() >> Last[bytes]()
 
-        stage = LStrip[str, str](source=source)
+        result: bytes = await sink.get_frame()
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text to strip      ')
-            i += 1
+        assert result == b"hi"
 
-        self.assertEqual(i, 3)
 
-    async def test_success_with_chars(self):
-        source = SyncSource(source=['aaabbbcccctext to stripcccbbbaaa',
-                                    'text to stripcccbbbaaa'])
+# ---------------------------------------------------------------------------
+# TestRStrip
+# ---------------------------------------------------------------------------
 
-        stage = LStrip[str, str](source=source, chars='abc')
 
-        i = 0
-        async for t in stage:
-            self.assertEqual(t, 'text to stripcccbbbaaa')
-            i += 1
+class TestRStrip:
+    async def test_strips_trailing_whitespace_only(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["  hello  "])
+        sink: Last[str] = source >> RStrip() >> Last[str]()
 
-        self.assertEqual(i, 2)
+        result: str = await sink.get_frame()
 
-    async def test_fail(self):
+        assert result == "  hello"
 
-        source = SyncSource(source=['     text to strip      ',
-                                    1,
-                                    '   \n text to strip      ',
-                                    2,
-                                    'text to strip      '])
+    async def test_strips_specified_chars_from_right_only(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["--hello--"])
+        sink: Last[str] = source >> RStrip(chars="-") >> Last[str]()
 
-        stage = LStrip[str, str](source=source)
+        result: str = await sink.get_frame()
 
-        with self.assertRaises(AttributeError):
-            [t async for t in stage]
+        assert result == "--hello"
+
+    async def test_works_with_bytes(self) -> None:
+        source: IterableSource[bytes] = IterableSource(source=[b"hi  "])
+        sink: Last[bytes] = source >> RStrip() >> Last[bytes]()
+
+        result: bytes = await sink.get_frame()
+
+        assert result == b"hi"
+
+
+# ---------------------------------------------------------------------------
+# TestLStrip
+# ---------------------------------------------------------------------------
+
+
+class TestLStrip:
+    async def test_strips_leading_whitespace_only(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["  hello  "])
+        sink: Last[str] = source >> LStrip() >> Last[str]()
+
+        result: str = await sink.get_frame()
+
+        assert result == "hello  "
+
+    async def test_strips_specified_chars_from_left_only(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["--hello--"])
+        sink: Last[str] = source >> LStrip(chars="-") >> Last[str]()
+
+        result: str = await sink.get_frame()
+
+        assert result == "hello--"
+
+    async def test_works_with_bytes(self) -> None:
+        source: IterableSource[bytes] = IterableSource(source=[b"  hi"])
+        sink: Last[bytes] = source >> LStrip() >> Last[bytes]()
+
+        result: bytes = await sink.get_frame()
+
+        assert result == b"hi"

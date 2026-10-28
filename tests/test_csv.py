@@ -1,252 +1,280 @@
-from unittest import IsolatedAsyncioTestCase
+from typing import Any
 
-from pyrill.accumulators import ListAcc
-from pyrill.base import BaseStage
+import pytest
+
+from pyrill.base import ElementState
 from pyrill.csv import DictFromCsv, DictToCsv, ListFromCsv, ListToCsv
 from pyrill.sinks import Last
-from pyrill.sources import SyncSource
-from pyrill.strlike import Join
+from pyrill.sources import IterableSource
+
+# ---------------------------------------------------------------------------
+# TestDictToCsv
+# ---------------------------------------------------------------------------
 
 
-class DictToCsvTestCase(IsolatedAsyncioTestCase):
+class TestDictToCsv:
+    async def test_columns_property_returns_configured_columns(self) -> None:
+        stage: DictToCsv = DictToCsv(columns=["name", "age"])
 
-    async def test_success(self):
-        source = SyncSource[int](source=[
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            {'field_1': 'id2', 'field_2': 2, 'field_3': 'pong_2'},
-            {'field_1': 'id3', 'field_2': 3, 'field_3': 'pong_3'}
-        ])
+        result = stage.columns
 
-        stage: BaseStage = DictToCsv(source=source, columns=['field_1', 'field_2', 'field_3'])
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
+        assert result == {"name": ("name", None), "age": ("age", None)}
 
-        self.assertEqual(
-            await sink.get_frame(),
-            """field_1,field_2,field_3\r\nid1,1,pong_1\r\nid2,2,pong_2\r\nid3,3,pong_3\r\n"""
+    async def test_emits_header_row_before_data(self) -> None:
+        source: IterableSource[dict[str, Any]] = IterableSource(
+            source=[{"name": "Alice"}]
+        )
+        stage: DictToCsv = source >> DictToCsv(columns=["name"])
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "name\r\n"
+
+    async def test_emits_data_row_after_header(self) -> None:
+        source: IterableSource[dict[str, Any]] = IterableSource(
+            source=[{"name": "Alice", "age": 30}]
+        )
+        stage: DictToCsv = source >> DictToCsv(columns=["name", "age"])
+        await stage.mount()
+        _ = await stage.__anext__()  # consume header
+
+        result = await stage.__anext__()
+
+        assert result == "Alice,30\r\n"
+
+    async def test_header_false_emits_data_row_first(self) -> None:
+        source: IterableSource[dict[str, Any]] = IterableSource(
+            source=[{"name": "Alice"}]
+        )
+        stage: DictToCsv = source >> DictToCsv(columns=["name"], header=False)
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "Alice\r\n"
+
+    async def test_missing_key_produces_empty_field(self) -> None:
+        source: IterableSource[dict[str, Any]] = IterableSource(
+            source=[{"name": "Alice"}]
+        )
+        stage: DictToCsv = source >> DictToCsv(columns=["name", "age"], header=False)
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "Alice,\r\n"
+
+    async def test_mapper_transforms_value(self) -> None:
+        source: IterableSource[dict[str, Any]] = IterableSource(
+            source=[{"val": 3.14159}]
+        )
+        stage: DictToCsv = source >> DictToCsv(
+            columns=[("val", "val", lambda x: round(x, 2))], header=False
+        )
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "3.14\r\n"
+
+    async def test_multiple_rows_emitted_in_order(self) -> None:
+        source: IterableSource[dict[str, Any]] = IterableSource(
+            source=[{"name": "Alice"}, {"name": "Bob"}]
+        )
+        sink: Last[str] = (
+            source >> DictToCsv(columns=["name"], header=False) >> Last[str]()
         )
 
-    async def test_success_dict_columns(self):
-        source = SyncSource[int](source=[
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            {'field_1': 'id2', 'field_2': 2, 'field_3': 'pong_2'},
-            {'field_1': 'id3', 'field_2': 3, 'field_3': 'pong_3'}
-        ])
+        result = await sink.get_frame()
 
-        stage: BaseStage = DictToCsv(source=source, columns={'id': 'field_1',
-                                                             'field_2': lambda x: x * 2,
-                                                             'msg': ('field_3', lambda x: x * 2)})
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
+        assert result == "Bob\r\n"
 
-        self.assertEqual(
-            await sink.get_frame(),
-            """id,field_2,msg\r\nid1,2,pong_1pong_1\r\nid2,4,pong_2pong_2\r\nid3,6,pong_3pong_3\r\n"""
+
+# ---------------------------------------------------------------------------
+# TestListToCsv
+# ---------------------------------------------------------------------------
+
+
+class TestListToCsv:
+    async def test_error_raised_by_mapper_propagates(self) -> None:
+        def add_one(value: int) -> int:
+            return value + 1
+
+        source: IterableSource[list[Any]] = IterableSource(source=[["a"]])
+        stage: ListToCsv = source >> ListToCsv(
+            columns=[("x", 0, add_one)], header=False
+        )
+        await stage.mount()
+
+        with pytest.raises(TypeError):
+            await stage.__anext__()
+
+        assert stage.state is ElementState.ERROR
+
+    async def test_emits_header_row_before_data(self) -> None:
+        source: IterableSource[list[Any]] = IterableSource(source=[["Alice", 30]])
+        stage: ListToCsv = source >> ListToCsv(columns=["name", "age"])
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "name,age\r\n"
+
+    async def test_emits_data_row_after_header(self) -> None:
+        source: IterableSource[list[Any]] = IterableSource(source=[["Alice", 30]])
+        stage: ListToCsv = source >> ListToCsv(columns=["name", "age"])
+        await stage.mount()
+        _ = await stage.__anext__()  # consume header
+
+        result = await stage.__anext__()
+
+        assert result == "Alice,30\r\n"
+
+    async def test_header_false_emits_data_row_first(self) -> None:
+        source: IterableSource[list[Any]] = IterableSource(source=[["Alice", 30]])
+        stage: ListToCsv = source >> ListToCsv(columns=["name", "age"], header=False)
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "Alice,30\r\n"
+
+    async def test_dict_columns_selects_fields_by_index(self) -> None:
+        source: IterableSource[list[Any]] = IterableSource(
+            source=[["Alice", 30, "eng"]]
+        )
+        stage: ListToCsv = source >> ListToCsv(
+            columns={"name": 0, "role": 2}, header=False
+        )
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert result == "Alice,eng\r\n"
+
+    async def test_multiple_rows_emitted_in_order(self) -> None:
+        source: IterableSource[list[Any]] = IterableSource(source=[["Alice"], ["Bob"]])
+        sink: Last[str] = (
+            source >> ListToCsv(columns=["name"], header=False) >> Last[str]()
         )
 
-    async def test_success_list_columns(self):
-        source = SyncSource[int](source=[
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            {'field_1': 'id2', 'field_2': 2, 'field_3': 'pong_2'},
-            {'field_1': 'id3', 'field_2': 3, 'field_3': None},
-        ])
+        result = await sink.get_frame()
 
-        stage: BaseStage = DictToCsv(source=source, columns=[('id', 'field_1'),
-                                                             ('field_2', lambda x: x * 2),
-                                                             ('msg', 'field_3', lambda x: x * 2)])
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
+        assert result == "Bob\r\n"
 
-        self.assertEqual(
-            await sink.get_frame(),
-            """id,field_2,msg\r\nid1,2,pong_1pong_1\r\nid2,4,pong_2pong_2\r\nid3,6,\r\n"""
+
+# ---------------------------------------------------------------------------
+# TestDictFromCsv
+# ---------------------------------------------------------------------------
+
+
+class TestDictFromCsv:
+    async def test_parses_csv_row_to_dict(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["Alice,30"])
+        stage: DictFromCsv = source >> DictFromCsv(
+            csv_kwargs={"fieldnames": ["name", "age"]}
         )
+        await stage.mount()
 
-    async def test_success_list_columns_2(self):
-        source = SyncSource[int](source=[
-            {'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-            {'field_1': 'id2', 'field_2': 2, 'field_3': 'pong_2'},
-            {'field_1': 'id3', 'field_2': 3},
-        ])
+        result = await stage.__anext__()
 
-        stage: BaseStage = DictToCsv(source=source, columns=[('id', 'field_1'),
-                                                             ('field_2', tuple()),
-                                                             ('msg', ('field_3',))])
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
+        assert isinstance(result, dict)
+        assert result == {"name": "Alice", "age": "30"}
 
-        self.assertEqual(
-            await sink.get_frame(),
-            """id,field_2,msg\r\nid1,1,pong_1\r\nid2,2,pong_2\r\nid3,3,\r\n"""
+    async def test_maps_applies_type_conversion(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["Alice,30"])
+        stage: DictFromCsv = source >> DictFromCsv(
+            csv_kwargs={"fieldnames": ["name", "age"]}, maps={"age": int}
         )
+        await stage.mount()
 
+        result = await stage.__anext__()
 
-class ListToCsvTestCase(IsolatedAsyncioTestCase):
+        assert isinstance(result, dict)
+        assert result == {"name": "Alice", "age": 30}
 
-    async def test_success(self):
-        source = SyncSource[int](source=[
-            ['id1', 1, 'pong_1'],
-            ['id2', 2, 'pong_2'],
-            ['id3', 3, 'pong_3']
-        ])
-
-        stage: BaseStage = ListToCsv(source=source, columns=['field_1', 'field_2', 'field_3'])
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
-
-        self.assertEqual(
-            await sink.get_frame(),
-            """field_1,field_2,field_3\r\nid1,1,pong_1\r\nid2,2,pong_2\r\nid3,3,pong_3\r\n"""
+    async def test_multiple_rows_parsed_independently(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["Alice,30", "Bob,25"])
+        stage: DictFromCsv = source >> DictFromCsv(
+            csv_kwargs={"fieldnames": ["name", "age"]}
         )
+        await stage.mount()
+        first = await stage.__anext__()
+        second = await stage.__anext__()
 
-    async def test_success_dict_columns(self):
-        source = SyncSource[int](source=[
-            ['id1', 1, 'pong_1'],
-            ['id2', 2, 'pong_2'],
-            ['id3', 3, 'pong_3']
-        ])
+        assert isinstance(first, dict)
+        assert isinstance(second, dict)
+        assert first == {"name": "Alice", "age": "30"}
+        assert second == {"name": "Bob", "age": "25"}
 
-        stage: BaseStage = ListToCsv(source=source, columns={'id': 0,
-                                                             'field_2': lambda x: x * 2,
-                                                             'msg': (2, lambda x: x * 2)})
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
-
-        self.assertEqual(
-            await sink.get_frame(),
-            """id,field_2,msg\r\nid1,2,pong_1pong_1\r\nid2,4,pong_2pong_2\r\nid3,6,pong_3pong_3\r\n"""
+    async def test_quoted_fields_parsed_correctly(self) -> None:
+        source: IterableSource[str] = IterableSource(source=['"Smith, Jr.",42'])
+        stage: DictFromCsv = source >> DictFromCsv(
+            csv_kwargs={"fieldnames": ["name", "age"]}
         )
+        await stage.mount()
 
-    async def test_success_list_columns(self):
-        source = SyncSource[int](source=[
-            ['id1', 1, 'pong_1'],
-            ['id2', 2, 'pong_2'],
-            ['id3', 3, None]
-        ])
+        result = await stage.__anext__()
 
-        stage: BaseStage = ListToCsv(source=source, columns=[('id', 0),
-                                                             ('field_2', (lambda x: x * 2,)),
-                                                             ('msg', 2, lambda x: x * 2)])
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
-
-        self.assertEqual(
-            await sink.get_frame(),
-            """id,field_2,msg\r\nid1,2,pong_1pong_1\r\nid2,4,pong_2pong_2\r\nid3,6,\r\n"""
-        )
-
-    async def test_success_list_columns_2(self):
-        source = SyncSource[int](source=[
-            ['id1', 1, 'pong_1'],
-            ['id2', 2, 'pong_2'],
-            ['id3', 3]
-        ])
-
-        stage: BaseStage = ListToCsv(source=source, columns=[('id',),
-                                                             ('field_2', tuple()),
-                                                             ('msg', (2,))])
-        stage = ListAcc(source=stage)
-        stage = Join(source=stage, join_str='')
-        sink = Last(source=stage)
-
-        self.assertEqual(
-            await sink.get_frame(),
-            """id,field_2,msg\r\nid1,1,pong_1\r\nid2,2,pong_2\r\nid3,3,\r\n"""
-        )
-
-    async def test_fail_invalid_columns(self):
-        with self.assertRaises(ValueError):
-            ListToCsv(columns=[1, 2, 4])
+        assert isinstance(result, dict)
+        assert result["name"] == "Smith, Jr."
 
 
-class DictFromCsvTestCase(IsolatedAsyncioTestCase):
-
-    async def test_success(self):
-        source = SyncSource[int](source=[
-            'field_1,field_2,field_3\r\n',
-            'id1,1,pong_1\r\n',
-            'id2,2,pong_2\r\n',
-            'id3,3,pong_3\r\n'
-
-        ])
-
-        stage: BaseStage = DictFromCsv(source=source)
-        stage = ListAcc(source=stage)
-        sink = Last(source=stage)
-
-        self.assertEqual(
-            await sink.get_frame(),
-            [{'field_1': 'id1', 'field_2': '1', 'field_3': 'pong_1'},
-             {'field_1': 'id2', 'field_2': '2', 'field_3': 'pong_2'},
-             {'field_1': 'id3', 'field_2': '3', 'field_3': 'pong_3'}]
-        )
-
-    async def test_success_with_maps(self):
-        source = SyncSource[int](source=[
-            'field_1,field_2,field_3\r\n',
-            'id1,1,pong_1\r\n',
-            'id2,2,pong_2\r\n',
-            'id3,3,pong_3\r\n'
-
-        ])
-
-        stage: BaseStage = DictFromCsv(source=source, maps={'field_2': lambda x: int(x)})
-        stage = ListAcc(source=stage)
-        sink = Last(source=stage)
-
-        self.assertEqual(
-            await sink.get_frame(),
-            [{'field_1': 'id1', 'field_2': 1, 'field_3': 'pong_1'},
-             {'field_1': 'id2', 'field_2': 2, 'field_3': 'pong_2'},
-             {'field_1': 'id3', 'field_2': 3, 'field_3': 'pong_3'}]
-        )
+# ---------------------------------------------------------------------------
+# TestListFromCsv
+# ---------------------------------------------------------------------------
 
 
-class ListFromCsvTestCase(IsolatedAsyncioTestCase):
+class TestListFromCsv:
+    async def test_frame_with_several_rows_emits_each_row(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["1,2\n3,4\n", "5,6\n"])
+        stage: ListFromCsv = source >> ListFromCsv()
+        await stage.mount()
 
-    async def test_success(self):
-        source = SyncSource[int](source=[
-            'field_1,field_2,field_3\r\n',
-            'id1,1,pong_1\r\n',
-            'id2,2,pong_2\r\n',
-            'id3,3,pong_3\r\n'
+        result = [row async for row in stage]
 
-        ])
+        assert result == [["1", "2"], ["3", "4"], ["5", "6"]]
+        assert stage.state is ElementState.NULL
 
-        stage: BaseStage = ListFromCsv(source=source)
-        stage = ListAcc(source=stage)
-        sink = Last(source=stage)
+    async def test_parses_csv_row_to_list(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["Alice,30"])
+        stage: ListFromCsv = source >> ListFromCsv()
+        await stage.mount()
 
-        self.assertEqual(
-            await sink.get_frame(),
-            [['field_1', 'field_2', 'field_3'],
-             ['id1', '1', 'pong_1'],
-             ['id2', '2', 'pong_2'],
-             ['id3', '3', 'pong_3']]
-        )
+        result = await stage.__anext__()
 
-    async def test_success_with_maps(self):
-        source = SyncSource[int](source=[
-            'id1,1,pong_1\r\n',
-            'id2,2,pong_2\r\n',
-            'id3,3,pong_3\r\n'
+        assert isinstance(result, list)
+        assert result == ["Alice", "30"]
 
-        ])
+    async def test_maps_applies_type_conversion(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["Alice,30"])
+        stage: ListFromCsv = source >> ListFromCsv(maps={1: int})
+        await stage.mount()
 
-        stage: BaseStage = ListFromCsv(source=source, maps={1: lambda x: int(x)})
-        stage = ListAcc(source=stage)
-        sink = Last(source=stage)
+        result = await stage.__anext__()
 
-        self.assertEqual(
-            await sink.get_frame(),
-            [['id1', 1, 'pong_1'],
-             ['id2', 2, 'pong_2'],
-             ['id3', 3, 'pong_3']]
-        )
+        assert isinstance(result, list)
+        assert result == ["Alice", 30]
+
+    async def test_multiple_rows_parsed_independently(self) -> None:
+        source: IterableSource[str] = IterableSource(source=["Alice,30", "Bob,25"])
+        stage: ListFromCsv = source >> ListFromCsv()
+        await stage.mount()
+        first = await stage.__anext__()
+        second = await stage.__anext__()
+
+        assert isinstance(first, list)
+        assert isinstance(second, list)
+        assert first == ["Alice", "30"]
+        assert second == ["Bob", "25"]
+
+    async def test_quoted_fields_parsed_correctly(self) -> None:
+        source: IterableSource[str] = IterableSource(source=['"Smith, Jr.",42'])
+        stage: ListFromCsv = source >> ListFromCsv()
+        await stage.mount()
+
+        result = await stage.__anext__()
+
+        assert isinstance(result, list)
+        assert result[0] == "Smith, Jr."

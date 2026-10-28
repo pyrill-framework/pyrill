@@ -1,54 +1,105 @@
-from typing import Any
-from unittest import IsolatedAsyncioTestCase
+import pytest
 
 from pyrill.base import ElementState
-from pyrill.sinks import First, Last
-from pyrill.sources import AsyncSource, SyncSource
+from pyrill.sinks import BlackHole, First, Last
+from pyrill.sources import IterableSource
+
+# ---------------------------------------------------------------------------
+# TestFirst
+# ---------------------------------------------------------------------------
 
 
-class FirstTestCase(IsolatedAsyncioTestCase):
+class TestFirst:
+    async def test_get_frame_returns_first_element_and_unmounts_both(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        sink: First[int] = source >> First[int]()
 
-    async def test_success(self):
-        source = SyncSource[int](source=[2, 56, 34])
+        result = await sink.get_frame()
 
-        sink = First(source=source)
+        assert result == 1
+        assert sink.state == ElementState.NULL
+        assert source.state == ElementState.NULL
 
-        self.assertEqual(await sink.get_frame(), 2)
+    async def test_get_frame_returns_first_of_single_element_source(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[42])
+        sink: First[int] = source >> First[int]()
 
-    async def test_no_frames(self):
-        source = SyncSource[Any](source=[])
+        result = await sink.get_frame()
 
-        sink = First(source=source)
+        assert result == 42
+        assert sink.state == ElementState.NULL
 
-        with self.assertRaises(ValueError):
+    async def test_get_frame_raises_value_error_on_empty_source_and_unmounts(
+        self,
+    ) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        sink: First[int] = source >> First[int]()
+
+        with pytest.raises(ValueError, match="No frames consumed"):
             await sink.get_frame()
 
+        assert sink.state == ElementState.NULL
+        assert source.state == ElementState.NULL
 
-class LastTestCase(IsolatedAsyncioTestCase):
 
-    async def test_success(self):
-        source = SyncSource[int](source=[2, 56, 34])
+# ---------------------------------------------------------------------------
+# TestLast
+# ---------------------------------------------------------------------------
 
-        sink = Last(source=source)
 
-        self.assertEqual(await sink.get_frame(), 34)
+class TestLast:
+    async def test_get_frame_returns_last_element_and_unmounts_both(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        sink: Last[int] = source >> Last[int]()
 
-    async def test_no_frames(self):
-        source = SyncSource[Any](source=[])
+        result = await sink.get_frame()
 
-        sink = Last(source=source)
+        assert result == 3
+        assert sink.state == ElementState.NULL
+        assert source.state == ElementState.NULL
 
-        with self.assertRaises(ValueError):
+    async def test_get_frame_with_single_element_returns_it(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[99])
+        sink: Last[int] = source >> Last[int]()
+
+        result = await sink.get_frame()
+
+        assert result == 99
+        assert sink.state == ElementState.NULL
+
+    async def test_get_frame_raises_value_error_on_empty_source_and_unmounts(
+        self,
+    ) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        sink: Last[int] = source >> Last[int]()
+
+        with pytest.raises(ValueError, match="No frames consumed"):
             await sink.get_frame()
 
-    async def test_error(self):
-        async def it():
-            yield 1
-            raise ValueError()
+        assert sink.state == ElementState.NULL
+        assert source.state == ElementState.NULL
 
-        sink = AsyncSource[Any](source=it()) >> Last()
 
-        with self.assertRaises(ValueError):
-            await sink.get_frame()
+# ---------------------------------------------------------------------------
+# TestBlackHole
+# ---------------------------------------------------------------------------
 
-        self.assertEqual(sink.state, ElementState.ERROR)
+
+class TestBlackHole:
+    async def test_consume_all_discards_all_frames_silently(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        sink: BlackHole[int] = source >> BlackHole[int]()
+
+        await sink.consume_all()
+
+        assert source.state == ElementState.NULL
+        assert sink.state == ElementState.NULL
+
+    async def test_consume_all_on_empty_source_completes_without_error(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        sink: BlackHole[int] = source >> BlackHole[int]()
+
+        await sink.consume_all()
+
+        assert source.state == ElementState.NULL
+        assert sink.state == ElementState.NULL

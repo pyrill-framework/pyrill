@@ -130,3 +130,23 @@ dmypy.json
 
 # PyCharm
 .idea/
+
+# VS Code
+.vscode/
+
+# Claude
+.claude/
+CLAUDE.md
+
+
+# Pytest
+.pytest_cache/
+pytest.xml
+test-results/
+
+# Ruff
+.ruff_cache/
+
+# UV
+.uv/
+uv.lock

@@ -1,78 +1,140 @@
-from asyncio import sleep
-from datetime import datetime, timedelta
-from unittest import IsolatedAsyncioTestCase
+import pytest
 
-from pyrill.queues import Queue
-from pyrill.sources import AsyncSource
+from pyrill.base import ElementState
+from pyrill.queues import Queue, QueueSource
+from pyrill.sinks import First, Last
+from pyrill.sources import IterableSource
+
+# ---------------------------------------------------------------------------
+# TestQueueSource
+# ---------------------------------------------------------------------------
 
 
-class QueueTestCase(IsolatedAsyncioTestCase):
+class TestQueueSource:
+    async def test_mount_transitions_to_ready(self) -> None:
+        source: QueueSource[int] = QueueSource()
 
-    async def test_success_preload(self):
-        async def gen():
-            for i in range(10):
-                yield i
-                await sleep(0.1)
+        await source.mount()
 
-        queue = AsyncSource[int](source=gen()) >> Queue()
-        queue.start_consumer()
+        assert source.state == ElementState.READY
 
-        await sleep(1)
-        ts = datetime.now()
+    async def test_unmount_transitions_to_null(self) -> None:
+        source: QueueSource[int] = QueueSource()
+        await source.mount()
 
-        async for i in queue:
-            ts_2 = datetime.now()
-            self.assertIsInstance(i, int)
-            self.assertLess(ts_2 - ts, timedelta(seconds=0.05), f'Iteration: {i}')
-            ts = ts_2
+        await source.unmount()
 
-    async def test_success_preload_limit(self):
-        async def gen():
-            for i in range(10):
-                yield i
-                await sleep(0.1)
+        assert source.state == ElementState.NULL
 
-        queue = AsyncSource[int](source=gen()) >> Queue(queue_size=1)
-        queue.start_consumer()
+    async def test_push_frame_makes_frame_available_via_anext(self) -> None:
+        source: QueueSource[int] = QueueSource()
+        await source.mount()
+        await source.push_frame(42)
 
-        await sleep(1)
-        ts = None
+        result = await source.__anext__()
 
-        async for i in queue:
-            ts_2 = datetime.now()
-            self.assertIsInstance(i, int)
-            if ts is not None and i > 1:
-                self.assertGreaterEqual(ts_2 - ts, timedelta(seconds=0.1), f'Iteration: {i}')
-            ts = ts_2
+        assert result == 42
+        assert source.state == ElementState.READY
 
-    async def test_success_stream(self):
-        async def gen():
-            for i in range(10):
-                await sleep(0.1)
-                yield i
+    async def test_push_multiple_frames_consumed_in_fifo_order(self) -> None:
+        source: QueueSource[int] = QueueSource()
+        await source.mount()
+        await source.push_frame(1)
+        await source.push_frame(2)
+        await source.push_frame(3)
 
-        queue = AsyncSource[int](source=gen()) >> Queue()
-        queue.start_consumer()
+        first = await source.__anext__()
+        second = await source.__anext__()
+        third = await source.__anext__()
 
-        ts = datetime.now()
+        assert first == 1
+        assert second == 2
+        assert third == 3
+        assert source.state == ElementState.READY
 
-        async for i in queue:
-            ts_2 = datetime.now()
-            self.assertIsInstance(i, int)
-            self.assertGreaterEqual(ts_2 - ts, timedelta(seconds=0.1), f'Iteration: {i}')
-            ts = ts_2
+    async def test_push_stop_async_iteration_exhausts_source(self) -> None:
+        source: QueueSource[int] = QueueSource()
+        await source.mount()
+        await source.push_frame(StopAsyncIteration())
 
-    async def test_success_fail(self):
-        async def gen():
-            for i in range(10):
-                yield i
-            raise ValueError()
+        with pytest.raises(StopAsyncIteration):
+            await source.__anext__()
 
-        queue = AsyncSource[int](source=gen()) >> Queue()
-        result = []
+        assert source.state == ElementState.NULL
 
-        with self.assertRaises(ValueError):
-            async for i in queue:
-                result.append(i)
+    async def test_push_exception_is_raised_by_anext(self) -> None:
+        source: QueueSource[int] = QueueSource()
+        await source.mount()
+        await source.push_frame(ValueError("boom"))
 
-        self.assertEqual(result, [i for i in range(10)])
+        with pytest.raises(ValueError, match="boom"):
+            await source.__anext__()
+
+    async def test_push_frame_after_stream_closed_raises(self) -> None:
+        source: QueueSource[int] = QueueSource()
+        await source.mount()
+        await source.push_frame(StopAsyncIteration())
+
+        with pytest.raises(RuntimeError, match="Stream already finished"):
+            await source.push_frame(99)
+
+    async def test_push_frame_without_mount_raises(self) -> None:
+        source: QueueSource[int] = QueueSource()
+
+        with pytest.raises(RuntimeError):
+            await source.push_frame(1)
+
+
+# ---------------------------------------------------------------------------
+# TestQueue
+# ---------------------------------------------------------------------------
+
+
+class TestQueue:
+    async def test_mount_after_stream_ends_succeeds(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2])
+        stage: Queue[int] = source >> Queue[int]()
+        await stage.mount()
+        _ = [frame async for frame in stage]
+
+        await stage.mount()
+
+        assert stage.state is ElementState.READY
+
+    async def test_last_sink_receives_final_frame(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        sink: Last[int] = source >> Queue[int]() >> Last[int]()
+
+        result = await sink.get_frame()
+
+        assert result == 3
+
+    async def test_first_sink_receives_first_frame(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[10, 20, 30])
+        sink: First[int] = source >> Queue[int]() >> First[int]()
+
+        result = await sink.get_frame()
+
+        assert result == 10
+
+    async def test_single_frame_source_passes_through(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[42])
+        sink: Last[int] = source >> Queue[int]() >> Last[int]()
+
+        result = await sink.get_frame()
+
+        assert result == 42
+
+    async def test_empty_source_raises_value_error_on_last(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        sink: Last[int] = source >> Queue[int]() >> Last[int]()
+
+        with pytest.raises(ValueError, match="No frames consumed"):
+            await sink.get_frame()
+
+    async def test_empty_source_raises_value_error_on_first(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        sink: First[int] = source >> Queue[int]() >> First[int]()
+
+        with pytest.raises(ValueError, match="No frames consumed"):
+            await sink.get_frame()
