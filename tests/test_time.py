@@ -28,9 +28,7 @@ async def _settle[T](awaitable: Awaitable[T], within: float = 1.0) -> asyncio.Fu
     return task
 
 
-def _clock(
-    *readings: datetime, then: datetime
-) -> Callable[[tzinfo | None], datetime]:
+def _clock(*readings: datetime, then: datetime) -> Callable[[tzinfo | None], datetime]:
     """Fake ``datetime.now``: returns ``readings`` in order, then ``then`` forever."""
     remaining = iter(readings)
 
@@ -262,7 +260,6 @@ class TestStopAt:
         assert not outcome.cancelled()
         assert isinstance(outcome.exception(), TimeoutError)
         assert stage.state is ElementState.ERROR
-
 
     async def test_upstream_timeout_stage_error_is_propagated(self) -> None:
         source: QueueSource[int] = QueueSource()
