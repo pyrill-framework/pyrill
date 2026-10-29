@@ -1,6 +1,6 @@
 [project]
 name = "pyrill"
-version = "0.2.0"
+version = "0.2.1"
 description = "Asynchronous streams for Python"
 readme = "README.md"
 authors = [{ name = "Alfred", email = "alfred82santa@gmail.com" }]
