@@ -1,6 +1,10 @@
 Welcome to PyRill's documentation!
 ==================================
 
+.. image:: /_static/brand/social-banner.png
+   :alt: PyRill — Asynchronous streams for Python
+   :width: 100%
+
 PyRill builds asynchronous data pipelines in plain Python. You connect small
 elements with ``>>`` and the data flows through them one frame at a time, on top
 of :mod:`asyncio` and with no dependencies.

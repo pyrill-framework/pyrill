@@ -112,7 +112,7 @@ class Queue[Source_co](BaseQueue[Source_co], BaseDecoupledStage[Source_co, Sourc
         return frame
 
     async def _decoupled_next_frame(self) -> Source_co:
-        return await super(BaseQueue[Source_co], self)._next_frame()
+        return await super()._next_frame()
 
 
 class QueueSource[Source_co](BaseQueue[Source_co], BaseSource[Source_co]):

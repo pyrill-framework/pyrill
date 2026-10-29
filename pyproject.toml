@@ -18,7 +18,7 @@ keywords = ["stream", "flow", "dataflow", "reactive"]
 [project.urls]
 Repository = "https://github.com/pyrill-framework/pyrill"
 Homepage = "https://github.com/pyrill-framework/pyrill"
-Documentation = "https://pyrill-framework.readthedocs.io/stable/"
+Documentation = "https://pyrill-framework.readthedocs.io/"
 Issues = "https://github.com/pyrill-framework/pyrill/issues"
 
 
