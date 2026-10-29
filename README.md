@@ -1,5 +1,7 @@
 # PyRill
 
+![PyRill — Asynchronous streams for Python](https://raw.githubusercontent.com/pyrill-framework/pyrill/main/docs/source/_static/brand/social-banner.png)
+
 Asynchronous streams for Python.
 
 PyRill builds asynchronous data pipelines in plain Python. You connect small

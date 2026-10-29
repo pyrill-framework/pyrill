@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 32 32" role="img" aria-labelledby="title desc">
+  <title id="title">PyRill</title>
+  <desc id="desc">Five circular stages connected by three flowing streams, cut out of a blue rounded square.</desc>
+  <defs>
+    <mask id="streams" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32" style="mask-type:luminance">
+      <rect width="32" height="32" fill="white"/>
+      <g fill="none" stroke="black" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5.75 6.75 C18 6.75 13 17.75 25.25 17.75"/><path d="M8.5 15.75 C15 15.75 18 17.75 25.25 17.75"/><path d="M6.5 25.25 C18 25.25 16 17.75 25.25 17.75"/></g>
+      <g fill="black"><circle cx="14.73" cy="11.1" r="3.1"/><circle cx="5.75" cy="6.75" r="3.1"/><circle cx="8.5" cy="15.75" r="3.1"/><circle cx="6.5" cy="25.25" r="3.1"/><circle cx="25.25" cy="17.75" r="3.1"/></g>
+    </mask>
+  </defs>
+  <rect width="32" height="32" rx="5.5" fill="currentColor" mask="url(#streams)"/>
+</svg>
