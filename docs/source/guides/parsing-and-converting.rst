@@ -103,8 +103,48 @@ incomplete bytes back until the rest arrives:
 Put ``UnicodeChunks`` before ``Decode`` whenever the bytes come from a stream you do
 not control.
 
-Convert CSV to JSON
--------------------
+Encode values as JSON
+---------------------
+
+Usually, :class:`~pyrill.json.ToJson` is the only JSON encoding stage you need.
+It handles strings, numbers, booleans, nulls, dictionaries and collections,
+including nested values. It automatically selects the array and object
+serializers, so you do not need to assemble them yourself.
+
+Each input frame holds a value to encode. Output is a stream of text fragments;
+join them with :class:`~pyrill.accumulators.SumAcc` when you need a complete
+string, or send them directly to a text sink. Here one frame contains the whole
+list of people:
+
+.. code-block:: python
+
+    import asyncio
+
+    from pyrill.accumulators import SumAcc
+    from pyrill.json import ToJson
+    from pyrill.sinks import Last
+    from pyrill.sources import IterableSource
+
+    people = [{"name": "Ann", "age": 30}, {"name": "Cleo", "age": 41}]
+
+
+    async def main() -> None:
+        sink = IterableSource(source=[people]) >> ToJson() >> SumAcc() >> Last()
+        print(repr(await sink.get_frame()))
+
+
+    asyncio.run(main())
+
+.. code-block:: text
+
+    '[{"name": "Ann", "age": 30}, {"name": "Cleo", "age": 41}]'
+
+``ToJson`` concatenates the documents from successive input frames without
+separators. Use :class:`~pyrill.json.ToJsonPerLine` for JSON Lines, or the
+container stages described below to collect separate frames into one document.
+
+Convert CSV to JSON Lines
+-------------------------
 
 :class:`~pyrill.csv.DictFromCsv` parses CSV text into dictionaries, one per row.
 The first row it receives is the header. ``maps`` converts columns to other types.
@@ -116,7 +156,7 @@ This pipeline keeps the people who are at least 30 years old:
 
     import asyncio
 
-    from pyrill.accumulators import ListAcc
+    from pyrill.accumulators import SumAcc
     from pyrill.csv import DictFromCsv
     from pyrill.json import ToJsonPerLine
     from pyrill.primitives import SkipIf
@@ -132,11 +172,10 @@ This pipeline keeps the people who are at least 30 years old:
             >> DictFromCsv(maps={"age": int})
             >> SkipIf(check_func=lambda row: row["age"] >= 30)
             >> ToJsonPerLine()
-            >> ListAcc()
+            >> SumAcc()
             >> Last()
         )
-        for line in await sink.get_frame():
-            print(line, end="")
+        print(await sink.get_frame(), end="")
 
 
     asyncio.run(main())
@@ -153,13 +192,16 @@ CSV file line by line.
 Build one JSON document
 -----------------------
 
-:class:`~pyrill.json.ToJsonPerLine` gives you one JSON document per frame, which
-suits log files and message streams. To produce a single JSON array or object from
-many frames, use :class:`~pyrill.json.ToJsonList` or
-:class:`~pyrill.json.ToJsonObject`. They emit the text in fragments as the items
-arrive, so a large document does not have to be built as one string. Join the
-fragments with :class:`~pyrill.accumulators.SumAcc` when you do want the whole
-text:
+When a list or dictionary is already available as one value, pass it to
+:class:`~pyrill.json.ToJson` as shown above. The container stages are useful
+when the entries arrive as separate input frames: :class:`~pyrill.json.ToJsonList`
+wraps a stream of values in one array, and :class:`~pyrill.json.ToJsonObject`
+wraps a stream of string-keyed pairs in one object.
+
+In this example, ``source=people`` emits each person separately, and
+``ToJsonList`` combines them into one array. All these serializers emit
+fragments, so the document can be written as entries arrive. Here
+:class:`~pyrill.accumulators.SumAcc` collects the complete text:
 
 .. code-block:: python
 
@@ -187,6 +229,74 @@ text:
 Items can be nested lists and dictionaries, and they can even be other
 ``ToJson``, ``ToJsonList`` or ``ToJsonObject`` pipelines: their output is placed
 inside the document.
+
+Build an object from queued JSON producers
+------------------------------------------
+
+Use :class:`~pyrill.queues.QueueSource` when application code supplies the object
+entries. Each pushed frame is a ``(key, producer)`` tuple: the key becomes an
+object key, and the :class:`~pyrill.json.BaseToJsonProducer` supplies the JSON
+fragments for its value. :class:`~pyrill.json.ToJsonObject` adds the braces,
+escapes the keys and inserts the separators.
+
+This example queues three entries whose values come from different JSON
+pipelines. Mount the outer stage before pushing, then push
+``StopAsyncIteration()`` after the last entry so the object can finish:
+
+.. code-block:: python
+
+    import asyncio
+
+    from pyrill.json import (
+        BaseToJsonProducer,
+        JSONValue,
+        ToJson,
+        ToJsonList,
+        ToJsonObject,
+    )
+    from pyrill.queues import QueueSource
+    from pyrill.sources import IterableSource
+
+
+    async def main() -> None:
+        source = QueueSource[tuple[str, BaseToJsonProducer]]()
+        stage = source >> ToJsonObject()
+        entries: list[tuple[str, BaseToJsonProducer]] = [
+            (
+                "profile",
+                IterableSource[JSONValue](source=[{"name": "Ann"}]) >> ToJson(),
+            ),
+            (
+                "scores",
+                IterableSource[JSONValue](source=[10, 20, 30]) >> ToJsonList(),
+            ),
+            (
+                "metadata",
+                IterableSource[tuple[str, JSONValue]](source=[("active", True)])
+                >> ToJsonObject(),
+            ),
+        ]
+
+        await stage.mount()
+        for key, producer in entries:
+            await source.push_frame((key, producer))
+        await source.end_of_stream()
+
+        text = "".join([fragment async for fragment in stage])
+        print(text)
+
+
+    asyncio.run(main())
+
+.. code-block:: text
+
+    {"profile": {"name": "Ann"}, "scores": [10, 20, 30], "metadata": {"active": true}}
+
+The queue is unlimited by default, so this example can enqueue all entries
+before reading. With a bounded ``queue_size``, push entries in a separate
+asynchronous task while consuming the stage. Each producer should emit one
+complete JSON value; its fragments are included directly with its own encoder
+settings.
 
 Write CSV
 ---------

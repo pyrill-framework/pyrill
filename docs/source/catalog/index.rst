@@ -4,6 +4,7 @@ Elements catalog
 
 
 .. toctree::
+    :maxdepth: 2
 
     base
     sources

@@ -41,6 +41,7 @@ __all__ = [
     "ElementState",
     "FrameSkipped",
     "Message",
+    "MessageBrokerMixin",
     "MessageCallback",
     "Pipeline",
     "active_pipeline",

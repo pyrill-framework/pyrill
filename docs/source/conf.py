@@ -8,6 +8,12 @@
 
 from datetime import UTC, datetime
 from importlib import metadata
+from typing import Any
+
+from docutils import nodes
+from sphinx import addnodes
+from sphinx.application import Sphinx
+from sphinx.environment.adapters.toctree import TocTree
 
 # -- Project information -----------------------------------------------------
 
@@ -50,6 +56,15 @@ html_theme_options = {
     "logo_name": True,
 }
 
+html_sidebars = {
+    "catalog/**": [
+        "about.html",
+        "searchfield.html",
+        "catalog_nav.html",
+        "relations.html",
+    ],
+}
+
 autodoc_default_options = {
     "member-order": "bysource",
     "undoc-members": True,
@@ -62,3 +77,63 @@ autodoc_class_signature = "separated"
 autodoc_typehints = "both"
 autodoc_preserve_defaults = True
 autodoc_inherit_docstrings = True
+
+
+CATALOG_INDEX = "catalog/index"
+
+
+def page_elements(app: Sphinx, pagename: str) -> nodes.bullet_list | None:
+    """Return the objects documented on a page, without their members."""
+    toc = TocTree(app.env).get_toc_for(pagename, app.builder)
+    element_lists = [
+        child
+        for page_item in toc.children
+        for child in page_item.children
+        if isinstance(child, nodes.bullet_list)
+    ]
+    if not element_lists:
+        return None
+    elements = element_lists[0]
+    for element in elements.children:
+        for member_list in list(element.findall(nodes.bullet_list)):
+            member_list.parent.remove(member_list)
+    return elements
+
+
+def add_catalog_toc(
+    app: Sphinx,
+    pagename: str,
+    templatename: str,
+    context: dict[str, Any],
+    doctree: nodes.document | None,
+) -> None:
+    """Expose the catalog sections, with the current section's elements, to the sidebar."""
+    if not pagename.startswith("catalog/"):
+        return
+    env = app.env
+    toc_nodes = list(env.tocs[CATALOG_INDEX].findall(addnodes.toctree))
+    if not toc_nodes:
+        return
+    resolved = TocTree(env).resolve(
+        pagename,
+        app.builder,
+        toc_nodes[0],
+        prune=False,
+        maxdepth=1,
+        titles_only=True,
+        collapse=True,
+        includehidden=True,
+    )
+    if resolved is None:
+        return
+    elements = page_elements(app, pagename) if pagename != CATALOG_INDEX else None
+    if elements is not None:
+        for item in resolved.findall(nodes.list_item):
+            if "current" in item["classes"]:
+                item.append(elements)
+                break
+    context["catalog_toc"] = app.builder.render_partial(resolved)["fragment"]
+
+
+def setup(app: Sphinx) -> None:
+    app.connect("html-page-context", add_catalog_toc)

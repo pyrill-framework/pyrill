@@ -4,11 +4,7 @@ from asyncio import QueueShutDown
 from contextlib import suppress
 from typing import Any
 
-from .base import (
-    BaseDecoupledStage,
-    BaseProducer,
-    BaseSource,
-)
+from .base import BaseDecoupledStage, BaseExternalSource, BaseProducer
 
 __all__ = [
     "BaseQueue",
@@ -115,7 +111,7 @@ class Queue[Source_co](BaseQueue[Source_co], BaseDecoupledStage[Source_co, Sourc
         return await super()._next_frame()
 
 
-class QueueSource[Source_co](BaseQueue[Source_co], BaseSource[Source_co]):
+class QueueSource[Source_co](BaseQueue[Source_co], BaseExternalSource[Source_co]):
     """
     Source that emits the frames pushed into it by application code.
 
@@ -151,6 +147,12 @@ class QueueSource[Source_co](BaseQueue[Source_co], BaseSource[Source_co]):
 
     async def push_frame(self, frame: Source_co | BaseException) -> None:
         """
-        Add a frame, an exception or ``StopAsyncIteration()`` to the queue.
+        Add a frame or exception to the queue.
         """
         await super()._push_frame(frame)
+
+    async def end_of_stream(self) -> None:
+        """
+        Close the stream after the frames already pushed.
+        """
+        await self.push_frame(StopAsyncIteration())

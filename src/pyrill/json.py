@@ -1,56 +1,49 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from contextlib import suppress
+from collections.abc import Collection, Iterator, Mapping
 from json import JSONDecoder, JSONEncoder, dumps, loads
 from typing import Any, cast
 
-from .base import BaseConsumer, BaseProducer, BaseSource, BaseStage, Pipeline
-from .primitives import BaseBin, PrefixStream, SuffixStream
+from .base import (
+    BaseProducer,
+    BaseStage,
+    FrameSkipped,
+)
+from .primitives import BaseFlatMap, Flat, SuffixStream
 from .sources import IterableSource
 
 __all__ = [
-    "DataToJson",
     "FromJson",
     "FromJsonMixin",
+    "JSONRawValue",
     "JSONValue",
-    "JsonableValue",
     "ToJson",
     "ToJsonInnerList",
     "ToJsonInnerObject",
     "ToJsonList",
-    "ToJsonMixin",
     "ToJsonObject",
     "ToJsonPerLine",
 ]
 
 
-type JSONValue = (
-    str | int | float | bool | None | dict[str, JSONValue] | list[JSONValue]
+type JSONRawValue = (
+    str | int | float | bool | None | Mapping[str, JSONRawValue] | list[JSONRawValue]
 )
-type JsonableValue = (
-    str
-    | int
-    | float
-    | bool
-    | None
-    | dict[str, JsonableValue]
-    | list[JsonableValue]
-    | tuple[JsonableValue, ...]
-    | set[JsonableValue]
-    | ToJson
-    | ToJsonList
-    | ToJsonObject
+
+type JSONValue = (
+    JSONRawValue | Mapping[str, JSONValue] | Collection[JSONValue] | BaseToJsonProducer
 )
 
 
 class FromJsonMixin:
     """
-    Mixin that gives a stage the ability to decode JSON text.
+    Add configurable JSON decoding to a stage.
 
     It adds the ``json_decoder_cls`` and ``json_decoder_kwargs`` options and the
-    :meth:`from_json` method. The mixin has no abstract methods: a stage class lists it
+    :meth:`from_json` method. A stage class lists this mixin
     before its stage base class and calls ``self.from_json(text)`` from its own
-    ``_process_frame``. :class:`FromJson` is the plain implementation.
+    ``_process_frame``. Each call expects one complete JSON document and raises
+    :class:`json.JSONDecodeError` for invalid text. :class:`FromJson` provides a
+    stage that returns the decoded value directly.
 
     :param json_decoder_cls: Custom :class:`json.JSONDecoder` subclass. Defaults to
         the standard decoder.
@@ -66,16 +59,19 @@ class FromJsonMixin:
 
     .. code-block:: python
 
-        from typing import Any
+        from collections.abc import Mapping
 
         from pyrill.base import BaseStage
-        from pyrill.json import FromJsonMixin
+        from pyrill.json import FromJsonMixin, JSONValue
         from pyrill.sources import IterableSource
 
 
-        class IdFromJson(FromJsonMixin, BaseStage[str, Any]):
-            async def _process_frame(self, frame: str) -> Any:
-                return self.from_json(frame)["id"]
+        class IdFromJson(FromJsonMixin, BaseStage[str, JSONValue]):
+            async def _process_frame(self, frame: str) -> JSONValue:
+                value = self.from_json(frame)
+                if not isinstance(value, Mapping):
+                    raise TypeError("Expected a JSON object")
+                return value["id"]
 
 
         source = IterableSource(source=['{"id": 7, "tags": []}', '{"id": 8, "tags": []}'])
@@ -114,12 +110,14 @@ class FromJsonMixin:
 
 class FromJson(FromJsonMixin, BaseStage[str, JSONValue]):
     """
-    Stage that decodes each JSON text frame into a Python value.
+    Decode each complete JSON text frame into one Python value.
 
     Each frame must hold one complete JSON document. Objects become dicts, arrays
     become lists, and so on. An invalid document raises :class:`json.JSONDecodeError`
     and puts the element in the error state. See :class:`FromJsonMixin` for the
-    decoder options.
+    decoder options. Frames are processed independently: partial documents are
+    not buffered across frames, and multiple documents in one frame are rejected.
+    An empty input stream produces no output.
 
     :param json_decoder_cls: Custom :class:`json.JSONDecoder` subclass. Optional.
     :param json_decoder_kwargs: Extra keyword arguments for :func:`json.loads`.
@@ -148,18 +146,26 @@ class FromJson(FromJsonMixin, BaseStage[str, JSONValue]):
         return self.from_json(frame)
 
 
-class ToJsonMixin:
+class BaseToJsonProducer(BaseProducer[str]):
     """
-    Mixin that gives an element the ability to encode Python values as JSON text.
+    Base class for producers that emit JSON text fragments.
 
-    It adds the ``json_encoder_cls`` and ``json_encoder_kwargs`` options and the
+    It adds the ``depth``, ``json_encoder_cls`` and ``json_encoder_kwargs`` options and the
     :meth:`to_json`, :meth:`get_key_separator` and :meth:`get_frame_separator`
     methods. By default the separators are ``", "`` between items and ``": "`` after
     keys, and there is no indentation; these are set with ``setdefault`` so the caller
-    can override them. The mixin has no abstract methods: an element class lists it
-    before its base class and calls ``self.to_json(value)`` where needed.
-    :class:`ToJson` and :class:`DataToJson` are plain implementations, and the list and
-    object encoders use the separators to build their fragments.
+    can override them. Subclasses implement production through the inherited
+    producer interface. :class:`ToJson`, :class:`ToJsonList` and
+    :class:`ToJsonObject` provide concrete serializers. A serializer receiving
+    another instance of this base class can forward its fragments directly.
+
+    :meth:`to_json` calls :func:`json.dumps` directly. Recursive dispatch and the
+    depth budget are handled by the concrete serializers, not by this method.
+
+    :param depth: Recursive streaming budget. Negative values allow unlimited
+        recursion; zero uses direct encoding in :class:`ToJson`. Positive values
+        are reduced as container serializers and their inner stages delegate to
+        further serializers. Defaults to ``-1``.
 
     :param json_encoder_cls: Custom :class:`json.JSONEncoder` subclass. Optional.
     :param json_encoder_kwargs: Extra keyword arguments for :func:`json.dumps`, for
@@ -174,37 +180,26 @@ class ToJsonMixin:
 
     .. code-block:: python
 
-        from typing import Any
+        from pyrill.json import ToJson
 
-        from pyrill.base import BaseStage
-        from pyrill.json import ToJsonMixin
-        from pyrill.sources import IterableSource
-
-
-        class SortedToJson(ToJsonMixin, BaseStage[Any, str]):
-            async def _process_frame(self, frame: Any) -> str:
-                return self.to_json(frame)
-
-
-        source = IterableSource(source=[{"b": 1, "a": 2}])
-        stage = source >> SortedToJson(
+        serializer = ToJson(
             json_encoder_kwargs={"sort_keys": True, "separators": (",", ":")}
         )
-
-        await stage.mount()
-        frames = [frame async for frame in stage]
-        # ['{"a":2,"b":1}']
+        text = serializer.to_json({"b": 1, "a": 2})
+        # '{"a":2,"b":1}'
     """
 
     def __init__(
         self,
         *args: Any,
+        depth: int = -1,
         json_encoder_cls: type[JSONEncoder] | None = None,
         json_encoder_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ):
         super().__init__(*args, **kwargs)
 
+        self.depth = depth
         self.json_encoder_cls = json_encoder_cls
 
         self.json_encoder_kwargs = json_encoder_kwargs or {}
@@ -229,7 +224,7 @@ class ToJsonMixin:
 
         return self._separators()[0]
 
-    def to_json(self, data: JSONValue | JsonableValue) -> str:
+    def to_json(self, data: JSONRawValue) -> str:
         """
         Encode a value as JSON text with the configured encoder and options.
         """
@@ -237,16 +232,44 @@ class ToJsonMixin:
         return dumps(data, cls=self.json_encoder_cls, **self.json_encoder_kwargs)
 
 
-class ToJson(ToJsonMixin, BaseStage[JSONValue, str]):
+class ToJson(
+    BaseToJsonProducer,
+    BaseFlatMap[
+        JSONValue,
+        str,
+    ],
+):
     """
-    Stage that encodes each frame as one JSON text frame.
+    Encode each input value as a stream of JSON text fragments.
 
-    Each incoming value is encoded as a whole, so one frame produces one string. For
-    large or nested values that should be emitted in pieces, use :class:`ToJsonList` or
-    :class:`ToJsonObject`. A value that cannot be encoded raises :class:`TypeError`
-    and puts the element in the error state. See :class:`ToJsonMixin` for the
-    encoder options.
+    This is the usual entry point for JSON encoding. It selects the appropriate
+    serializers for nested values automatically; most callers only need this
+    stage and a sink for its output.
 
+    Mappings become objects; other collections, including tuples and sets, become
+    arrays. Strings are encoded as JSON strings. Nested values are serialized
+    recursively, and :class:`BaseToJsonProducer` values contribute their existing
+    fragments without being encoded again. Forwarded producers retain their own
+    encoder settings. Sets follow their iteration order.
+
+    Join the fragments for a complete document. Successive input values are
+    concatenated without separators; use :class:`ToJsonPerLine` for JSON Lines,
+    or :class:`ToJsonList` to wrap the input stream in one array. Unsupported
+    values raise :class:`TypeError` and put the stage in the error state.
+
+    At depth zero, mappings are passed directly to :func:`json.dumps`, preserving
+    their keys and values as objects. Strings and scalar values are also encoded
+    directly; other collections are converted to lists first. Encoder options
+    such as ``sort_keys`` and ``indent`` apply to the complete directly encoded
+    value. Recursive streaming preserves mapping iteration order instead of
+    sorting its entries.
+
+    Embedded producers inside directly encoded mappings or collections require
+    a custom encoder. A producer supplied as the input value is forwarded at any
+    depth. Empty input produces no fragments.
+
+    :param depth: Recursive streaming budget; defaults to ``-1`` (unlimited).
+        See :class:`BaseToJsonProducer` for how positive budgets are reduced.
     :param json_encoder_cls: Custom :class:`json.JSONEncoder` subclass. Optional.
     :param json_encoder_kwargs: Extra keyword arguments for :func:`json.dumps`, for
         example ``{"sort_keys": True}``. Defaults to none.
@@ -254,7 +277,7 @@ class ToJson(ToJsonMixin, BaseStage[JSONValue, str]):
     Input and output::
 
         input:  {"a": [1, 2]}, 3
-        output: '{"a": [1, 2]}', '3'
+        output joined: '{"a": [1, 2]}3'
 
     Usage:
 
@@ -267,22 +290,74 @@ class ToJson(ToJsonMixin, BaseStage[JSONValue, str]):
         stage = source >> ToJson()
 
         await stage.mount()
-        frames = [frame async for frame in stage]
-        # ['{"a": [1, 2]}', '3']
+        text = "".join([fragment async for fragment in stage])
+        # '{"a": [1, 2]}3'
     """
 
-    async def _process_frame(self, frame: JSONValue) -> str:
-        return self.to_json(frame)
+    def _map_frame_to_producer_no_deep(
+        self,
+        frame: JSONValue,
+    ) -> BaseProducer[str]:
+        match frame:
+            case BaseToJsonProducer():
+                return frame
+            case str():
+                return IterableSource(source=self.to_json(frame))
+            case Mapping():
+                return IterableSource(
+                    source=self.to_json(cast(Mapping[str, JSONRawValue], frame))
+                )
+            case Collection():
+                return IterableSource(
+                    source=self.to_json(list(cast(Collection[JSONRawValue], frame)))
+                )
+            case _:
+                return IterableSource(source=self.to_json(frame))
+
+    async def _map_frame_to_producer(
+        self,
+        frame: JSONValue,
+    ) -> BaseProducer[str]:
+        if self.depth == 0:
+            return self._map_frame_to_producer_no_deep(frame)
+
+        match frame:
+            case BaseToJsonProducer():
+                return frame
+            case Mapping():
+                return IterableSource(
+                    source=cast(Mapping[str, JSONValue], frame).items()
+                ) >> ToJsonObject(
+                    depth=max(0, self.depth - 1) if self.depth >= 0 else -1,
+                    json_encoder_cls=self.json_encoder_cls,
+                    json_encoder_kwargs=self.json_encoder_kwargs,
+                )
+            case str():
+                return IterableSource(source=self.to_json(frame))
+            case Collection():
+                return IterableSource(
+                    source=cast(Collection[JSONValue], frame)
+                ) >> ToJsonList(
+                    depth=max(0, self.depth - 1) if self.depth >= 0 else -1,
+                    json_encoder_cls=self.json_encoder_cls,
+                    json_encoder_kwargs=self.json_encoder_kwargs,
+                )
+            case _:
+                return IterableSource(source=self.to_json(frame))
 
 
 class ToJsonPerLine(ToJson):
     """
-    Stage that encodes each frame as one compact JSON line (JSON Lines).
+    Encode each input value as a JSON document followed by a newline.
 
     It works like :class:`ToJson`, but it forces compact separators (``","`` and
-    ``":"``) and no indentation, and it appends a newline to every frame. The result
-    can be written directly to a file with one document per line.
+    ``":"``) and no indentation for values it serializes. It appends one newline
+    after all fragments for each input value, even when the value is a JSON
+    producer. Forwarded producers retain their own formatting. An empty input
+    stream produces no text.
 
+    :param depth: Recursive streaming budget, as in :class:`ToJson`.
+        Defaults to ``-1`` (unlimited).
     :param json_encoder_cls: Custom :class:`json.JSONEncoder` subclass. Optional.
     :param json_encoder_kwargs: Extra keyword arguments for :func:`json.dumps`. The
         ``separators`` and ``indent`` options are always overridden.
@@ -290,7 +365,7 @@ class ToJsonPerLine(ToJson):
     Input and output::
 
         input:  {"a": [1, 2]}, 3
-        output: '{"a":[1,2]}\\n', '3\\n'
+        output joined: '{"a":[1,2]}\\n3\\n'
 
     Usage:
 
@@ -303,8 +378,8 @@ class ToJsonPerLine(ToJson):
         stage = source >> ToJsonPerLine()
 
         await stage.mount()
-        frames = [frame async for frame in stage]
-        # ['{"a":[1,2]}\\n', '3\\n']
+        text = "".join([fragment async for fragment in stage])
+        # '{"a":[1,2]}\\n3\\n'
     """
 
     def __init__(self, *args: Any, **kwargs: Any):
@@ -313,217 +388,234 @@ class ToJsonPerLine(ToJson):
         self.json_encoder_kwargs["separators"] = (",", ":")
         self.json_encoder_kwargs["indent"] = None
 
-    async def _process_frame(self, frame: JSONValue) -> str:
-        return await super()._process_frame(frame) + "\n"
+    async def _map_frame_to_producer(
+        self,
+        frame: JSONValue,
+    ) -> BaseProducer[str]:
+        return (await super()._map_frame_to_producer(frame)) >> SuffixStream(
+            suffix="\n"
+        )
 
 
-class DataToJson(ToJsonMixin, BaseSource[str]):
+class BaseToJsonInner[Sink_co](BaseToJsonProducer, BaseFlatMap[Sink_co, str], ABC):
     """
-    Source that encodes one value as JSON text and then ends.
+    Serialize container entries with separators and without outer delimiters.
 
-    The value is given at construction time and emitted as a single string frame.
-    Remounting the source emits it again. Unlike :class:`ToJson`, the value may
-    contain tuples, sets and :class:`ToJson`, :class:`ToJsonList` or
-    :class:`ToJsonObject` stages (see ``JsonableValue``), which are used by the list
-    and object encoders for nested values.
+    Subclasses implement :meth:`_build_pipe` to return the producers that emit
+    one entry. This base flattens those producers and inserts the configured
+    item separator before every entry after the first. Mounting resets the
+    first-entry flag. Empty input produces no fragments.
 
-    :param data: The value to encode.
-    :param json_encoder_cls: Custom :class:`json.JSONEncoder` subclass. Optional.
-    :param json_encoder_kwargs: Extra keyword arguments for :func:`json.dumps`.
+    Encoder settings and the depth budget are inherited from
+    :class:`BaseToJsonProducer`; subclasses pass them to nested serializers.
+    """
+
+    _first: bool = False
+
+    @abstractmethod
+    def _build_pipe(self, frame: Sink_co) -> list[BaseProducer[str]]:
+        raise NotImplementedError()
+
+    async def _map_frame_to_producer(self, frame: Sink_co) -> BaseProducer[str]:
+        pipe: list[BaseProducer[str]] = self._build_pipe(frame)
+        if self._first is False:
+            self._first = True
+        else:
+            pipe.insert(0, IterableSource(source=[self._separators()[0]]))
+
+        return IterableSource(source=pipe) >> Flat[str]()
+
+    async def _mount(self) -> None:
+        self._first = False
+        await super()._mount()
+
+
+class BaseToJson[Source_co](BaseToJsonProducer, BaseStage[Source_co, str], ABC):
+    """
+    Wrap a stream of serialized entries in JSON container delimiters.
+
+    Subclasses define ``_delimiters`` as an opening and closing string and
+    ``_inner_stage`` as a :class:`BaseToJsonInner` implementation. The stage
+    emits the opening delimiter, flattens the inner stage, then emits the closing
+    delimiter. Empty input still produces both delimiters.
+
+    The inner stage receives the source, depth budget and encoder settings.
+    See :class:`BaseToJsonProducer` for the inherited constructor options.
+    """
+
+    _delimiters: tuple[str, str]
+    _inner_stage: type[BaseToJsonInner[Source_co]]
+
+    _source_iter: Iterator[BaseProducer[str]] | None = None
+
+    _current_frame: BaseProducer[str] | None = None
+
+    async def _next_frame(self) -> str:
+        if self._source_iter is None:
+            self._source_iter = iter(
+                [
+                    IterableSource(source=[self._delimiters[0]]),
+                    self._inner_stage(
+                        source=self.source,
+                        depth=self.depth,
+                        json_encoder_cls=self.json_encoder_cls,
+                        json_encoder_kwargs=self.json_encoder_kwargs,
+                    ),
+                    IterableSource(source=[self._delimiters[1]]),
+                ]
+            )
+        if self._current_frame is None:
+            try:
+                self._current_frame = next(self._source_iter)
+            except StopIteration:
+                raise StopAsyncIteration()
+
+            await self._current_frame.mount()
+
+        try:
+            return await self._current_frame.__anext__()
+        except StopAsyncIteration as ex:
+            await self._current_frame.unmount()
+            self._current_frame = None
+            raise FrameSkipped(ex)
+
+    async def _process_frame(self, frame: Source_co) -> str:
+        raise NotImplementedError()
+
+
+class ToJsonInnerList(BaseToJsonInner[JSONValue]):
+    """
+    Encode array items with separators and without square brackets.
+
+    Each value is delegated to :class:`ToJson` with the inherited encoder
+    settings and a reduced depth budget. Existing :class:`BaseToJsonProducer`
+    values are forwarded with their own settings. Empty input produces no text.
+    Use :class:`ToJsonList` to include the enclosing brackets.
+
+    See :class:`BaseToJsonProducer` for the constructor options.
 
     Input and output::
 
-        input:  (none, the data is given as a parameter)
-        output: '{"a": [1, 2]}'
+        input:  1, "a", None
+        output joined: '1, "a", null'
+    """
+
+    def _build_pipe(self, frame: JSONValue) -> list[BaseProducer[str]]:
+        return [
+            frame
+            if isinstance(frame, BaseToJsonProducer)
+            else IterableSource[JSONValue](source=[frame])
+            >> ToJson(
+                depth=max(0, self.depth - 1) if self.depth >= 0 else -1,
+                json_encoder_cls=self.json_encoder_cls,
+                json_encoder_kwargs=self.json_encoder_kwargs,
+            )
+        ]
+
+
+class ToJsonList(BaseToJson[JSONValue]):
+    """
+    Encode the entire input stream as one JSON array, fragment by fragment.
+
+    Concatenating the emitted frames gives the JSON text; nested lists, tuples,
+    sets and mappings are serialized through :class:`ToJsonInnerList` and
+    :class:`ToJson`. An empty input stream yields ``"[]"``. JSON producer values
+    contribute their fragments directly and retain their own encoder settings.
+
+    :param depth: Recursive streaming budget passed to the inner stage.
+        Defaults to ``-1`` (unlimited); see :class:`BaseToJsonProducer`.
+    :param json_encoder_cls: Custom :class:`json.JSONEncoder` subclass. Optional.
+    :param json_encoder_kwargs: Options for :func:`json.dumps`, including the
+        separators used between array items. Defaults to none.
+
+    Input and output::
+
+        input:  {"a": 1}, [2, 3]
+        output joined: '[{"a": 1}, [2, 3]]'
 
     Usage:
 
     .. code-block:: python
 
-        from pyrill.json import DataToJson
+        from pyrill.json import ToJsonList
+        from pyrill.sources import IterableSource
 
-        source = DataToJson(data={"a": [1, 2]})
-
-        await source.mount()
-        frames = [frame async for frame in source]
-        # ['{"a": [1, 2]}']
+        stage = IterableSource(source=[1, [2, 3]]) >> ToJsonList()
+        await stage.mount()
+        text = "".join([fragment async for fragment in stage])
+        # '[1, [2, 3]]'
     """
 
-    def __init__(self, *args: Any, data: JsonableValue, **kwargs: Any):
-        super().__init__(*args, **kwargs)
-
-        self._data: JsonableValue = data
-        self._eos = False
-
-    async def _mount(self) -> None:
-        self._eos = False
-
-        await super()._mount()
-
-    async def _next_frame(self) -> str:
-        if self._eos:
-            raise StopAsyncIteration()
-        result = self.to_json(self._data)
-        self._eos = True
-        return result
+    _delimiters = ("[", "]")
+    _inner_stage = ToJsonInnerList
 
 
-def _build_json_iter_from(
-    value: JsonableValue,
-    *,
-    pipeline: Pipeline,
-    json_encoder_cls: type[JSONEncoder] | None = None,
-    json_encoder_kwargs: dict[str, Any] | None = None,
-) -> BaseProducer[str]:
-    if isinstance(value, (ToJson, ToJsonList, ToJsonObject)):
-        # Already a stream of JSON fragments: flatten it in place.
-        return value
-
-    encoder_kwargs: dict[str, Any] = {
-        "json_encoder_cls": json_encoder_cls,
-        "json_encoder_kwargs": json_encoder_kwargs,
-        "pipeline": pipeline,
-    }
-    if isinstance(value, Mapping):
-        items = [(str(k), v) for k, v in value.items()]
-        return IterableSource(source=items, pipeline=pipeline) >> ToJsonObject(
-            **encoder_kwargs
-        )
-    if isinstance(value, (list, tuple, set)):
-        return IterableSource(source=value, pipeline=pipeline) >> ToJsonList(
-            **encoder_kwargs
-        )
-    return DataToJson(data=value, **encoder_kwargs)
-
-
-class _BaseToJsonInner[Sink_co](
-    ToJsonMixin, BaseConsumer[Sink_co], BaseProducer[str], ABC
-):
+class ToJsonInnerObject(BaseToJsonInner[tuple[str, JSONValue]]):
     """
-    Emits the JSON fragments of a container's items, without the brackets.
+    Encode key-value pairs with separators and without curly braces.
 
-    Each consumed frame opens one item: :meth:`_open_item` returns the text that
-    precedes its value (e.g. an object key) and the value, which is then streamed
-    through a nested producer, so nested containers are encoded incrementally.
+    Keys are JSON-escaped strings followed by the configured key separator.
+    Values are delegated to :class:`ToJson` with the inherited encoder settings
+    and a reduced depth budget. Existing :class:`BaseToJsonProducer` values are
+    forwarded with their own settings. Empty input produces no text.
+    Use :class:`ToJsonObject` to include the enclosing braces.
+
+    See :class:`BaseToJsonProducer` for the constructor options.
+
+    Input and output::
+
+        input:  ("a", 1), ("b", None)
+        output joined: '"a": 1, "b": null'
     """
 
-    _iter_value: BaseProducer[str] | None = None
-    _first: bool = True
-
-    @abstractmethod
-    def _open_item(self, frame: Sink_co) -> tuple[str, JsonableValue]:
-        raise NotImplementedError()
-
-    async def _mount(self) -> None:
-        self._iter_value = None
-        self._first = True
-
-        await super()._mount()
-
-    async def _unmount(self) -> None:
-        if self._iter_value is not None:
-            with suppress(Exception):
-                await self._iter_value.unmount()
-            self._iter_value = None
-
-        await super()._unmount()
-
-    async def _next_frame(self) -> str:
-        while True:
-            if self._iter_value is not None:
-                try:
-                    return await self._iter_value.__anext__()
-                except StopAsyncIteration:
-                    self._iter_value = None
-
-            head, value = self._open_item(await self.consume_frame())
-
-            self._iter_value = _build_json_iter_from(
-                value,
-                pipeline=self.pipeline,
+    def _build_pipe(self, frame: tuple[str, JSONValue]) -> list[BaseProducer[str]]:
+        return [
+            IterableSource(source=[self.to_json(frame[0]), self._separators()[1]]),
+            frame[1]
+            if isinstance(frame[1], BaseToJsonProducer)
+            else IterableSource(source=[frame[1]])
+            >> ToJson(
+                depth=max(0, self.depth - 1) if self.depth >= 0 else -1,
                 json_encoder_cls=self.json_encoder_cls,
-                json_encoder_kwargs=self.json_encoder_kwargs.copy(),
-            )
-            await self._iter_value.mount()
-
-            if self._first:
-                self._first = False
-            else:
-                head = self.get_frame_separator() + head
-            if head:
-                return head
+                json_encoder_kwargs=self.json_encoder_kwargs,
+            ),
+        ]
 
 
-class ToJsonInnerList(_BaseToJsonInner[JsonableValue]):
+class ToJsonObject(BaseToJson[tuple[str, JSONValue]]):
     """
-    Internal helper of :class:`ToJsonList` that emits the items of a list as JSON
-    fragments, without the brackets. Each item is streamed through a nested encoder
-    and consecutive items are separated by the frame separator.
-    """
+    Encode a stream of string-keyed pairs as one JSON object in fragments.
 
-    def _open_item(self, frame: JsonableValue) -> tuple[str, JsonableValue]:
-        return "", frame
+    Join the emitted fragments to obtain the complete object. Entries retain
+    input order, including duplicate keys; ``sort_keys`` does not reorder the
+    streamed entries. Keys are escaped by :class:`ToJsonInnerObject`, and nested
+    values are serialized through :class:`ToJson`. JSON producer values forward
+    their fragments with their own encoder settings. Empty input yields ``"{}"``.
 
-
-class ToJsonInnerObject(_BaseToJsonInner[tuple[str, JsonableValue]]):
-    """
-    Internal helper of :class:`ToJsonObject` that emits ``(key, value)`` pairs as JSON
-    fragments, without the braces. Each key is followed by the key separator and each
-    value is streamed through a nested encoder.
-    """
-
-    def _open_item(self, frame: tuple[str, JsonableValue]) -> tuple[str, JsonableValue]:
-        key, value = frame
-        return self.to_json(str(key)) + self.get_key_separator(), value
-
-
-class ToJsonList(ToJsonMixin, BaseBin[JsonableValue, str]):
-    """
-    Stage that encodes a stream of values as one JSON array, fragment by fragment.
-
-    Concatenating the emitted frames gives the JSON text; nested lists, tuples,
-    sets and mappings are streamed the same way.
+    :param depth: Recursive streaming budget passed to the inner stage.
+        Defaults to ``-1`` (unlimited); see :class:`BaseToJsonProducer`.
+    :param json_encoder_cls: Custom :class:`json.JSONEncoder` subclass. Optional.
+    :param json_encoder_kwargs: Options for :func:`json.dumps`, including the
+        separators used between entries and between keys and values.
+        Defaults to none.
 
     Input and output::
 
-        input:  {"a": 1}, [2, 3]
-        output: "[", "{", "\"a\": ", "1", "}", ", ", "[", ... "]"
-                (joined: '[{"a": 1}, [2, 3]]')
+        input:  ("a", 1), ("b", [2, 3])
+        output joined: '{"a": 1, "b": [2, 3]}'
+
+    Usage:
+
+    .. code-block:: python
+
+        from pyrill.json import ToJsonObject
+        from pyrill.sources import IterableSource
+
+        stage = IterableSource(source=[("a", 1), ("b", [2, 3])]) >> ToJsonObject()
+        await stage.mount()
+        text = "".join([fragment async for fragment in stage])
+        # '{"a": 1, "b": [2, 3]}'
     """
 
-    def _get_upstream_downstream(
-        self,
-    ) -> tuple[BaseConsumer[JsonableValue], BaseProducer[str]]:
-        inner = ToJsonInnerList(
-            json_encoder_cls=self.json_encoder_cls,
-            json_encoder_kwargs=self.json_encoder_kwargs.copy(),
-        )
-        return inner, (
-            inner >> PrefixStream[str](prefix="[") >> SuffixStream[str](suffix="]")
-        )
-
-
-class ToJsonObject(ToJsonMixin, BaseBin[tuple[str, JsonableValue], str]):
-    """
-    Stage that encodes a stream of ``(key, value)`` pairs as one JSON object,
-    fragment by fragment.
-
-    Concatenating the emitted frames gives the JSON text; nested values are
-    streamed the same way as in :class:`ToJsonList`.
-
-    Input and output::
-
-        input:  ("a", 1), ("b", [2])
-        output: (joined) '{"a": 1, "b": [2]}'
-    """
-
-    def _get_upstream_downstream(
-        self,
-    ) -> tuple[BaseConsumer[tuple[str, JsonableValue]], BaseProducer[str]]:
-        inner = ToJsonInnerObject(
-            json_encoder_cls=self.json_encoder_cls,
-            json_encoder_kwargs=self.json_encoder_kwargs.copy(),
-        )
-        return inner, (
-            inner >> PrefixStream[str](prefix="{") >> SuffixStream[str](suffix="}")
-        )
+    _delimiters = ("{", "}")
+    _inner_stage = ToJsonInnerObject
