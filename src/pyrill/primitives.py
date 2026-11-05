@@ -34,12 +34,14 @@ __all__ = [
     "BaseBin",
     "BaseFlat",
     "BaseFlatMap",
+    "BaseSkip",
     "Bin",
     "BinBuilder",
     "Flat",
     "FlatMap",
     "FutureSource",
     "Gate",
+    "Limit",
     "MapFunc",
     "Noop",
     "PrefixStream",
@@ -149,7 +151,51 @@ class SuffixStream[Frame_co](Noop[Frame_co]):
             return self.suffix
 
 
-class SkipIf[Frame_co](BaseStage[Frame_co, Frame_co]):
+class BaseSkip[Frame_co](BaseStage[Frame_co, Frame_co], ABC):
+    """
+    Abstract stage that keeps or drops each frame without changing its value.
+
+    A subclass implements ``async _should_skip(frame)``. Despite the method's
+    name, returning ``True`` keeps the frame and returning ``False`` drops it by
+    raising :class:`~pyrill.base.FrameSkipped`. Dropping a frame does not end the
+    stream. :class:`SkipIf` and :class:`Skip` build on this behavior.
+
+    Input and output::
+
+        input:  1, 2, 3, 4
+        output: 2, 4 (when the method returns True for even frames)
+
+    Usage:
+
+    .. code-block:: python
+
+        from pyrill.primitives import BaseSkip
+        from pyrill.sources import IterableSource
+
+        class KeepEven(BaseSkip[int]):
+            async def _should_skip(self, frame: int) -> bool:
+                return frame % 2 == 0
+
+        source = IterableSource(source=[1, 2, 3, 4])
+        stage = source >> KeepEven()
+
+        await stage.mount()
+        frames = [frame async for frame in stage]
+        # [2, 4]
+    """
+
+    @abstractmethod
+    async def _should_skip(self, frame: Frame_co) -> bool:
+        raise NotImplementedError()
+
+    async def _process_frame(self, frame: Frame_co) -> Frame_co:
+        if await self._should_skip(frame):
+            return frame
+
+        raise FrameSkipped(frame)
+
+
+class SkipIf[Frame_co](BaseSkip[Frame_co]):
     """
     Stage that keeps only the frames accepted by a predicate.
 
@@ -191,14 +237,114 @@ class SkipIf[Frame_co](BaseStage[Frame_co, Frame_co]):
 
         self._check_func = check_func
 
-    async def _process_frame(self, frame: Frame_co) -> Frame_co:
+    async def _should_skip(self, frame: Frame_co) -> bool:
         result: bool | Awaitable[bool] = self._check_func(frame)
         if isawaitable(result):
-            result = await result
-        if result:
-            return frame
+            return await result
+        return result
 
-        raise FrameSkipped(frame)
+
+class Skip[Source_co](BaseSkip[Source_co]):
+    """
+    Stage that drops the first ``count`` frames and passes on the rest unchanged.
+
+    Frames retain their input order. If the source ends before ``count`` frames
+    have been skipped, the stage emits nothing. The counter resets on mount and
+    unmount, so each run skips the prefix again.
+
+    :param count: Number of initial frames to drop; ``0``, the default, keeps all
+        frames. Negative values also keep all frames.
+
+    Input and output::
+
+        input:  1, 2, 3, 4, 5
+        output: 3, 4, 5 (count=2)
+
+    Usage:
+
+    .. code-block:: python
+
+        from pyrill.primitives import Skip
+        from pyrill.sources import IterableSource
+
+        source = IterableSource(source=[1, 2, 3, 4, 5])
+        stage = source >> Skip[int](count=2)
+
+        await stage.mount()
+        frames = [frame async for frame in stage]
+        # [3, 4, 5]
+    """
+
+    def __init__(self, *args: Any, count: int = 0, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self._count = count
+        self._counter = 0
+
+    async def _mount(self) -> None:
+        self._counter = 0
+        return await super()._mount()
+
+    async def _unmount(self) -> None:
+        self._counter = 0
+        return await super()._unmount()
+
+    async def _should_skip(self, frame: Source_co) -> bool:
+        if self._counter >= self._count:
+            return True
+        self._counter += 1
+        return False
+
+
+class Limit[Source_co](Noop[Source_co]):
+    """
+    Stage that emits at most ``count`` frames, then ends the stream.
+
+    Frames are passed unchanged and in input order. Once the limit is reached,
+    the stage ends without requesting another upstream frame. If the source
+    ends earlier, only the available frames are emitted. The counter resets on
+    mount and unmount, so each run starts with the full allowance.
+
+    :param count: Maximum number of frames to emit; ``0``, the default, emits
+        nothing. Negative values also emit nothing.
+
+    Input and output::
+
+        input:  1, 2, 3, 4, 5
+        output: 1, 2 (count=2)
+
+    Usage:
+
+    .. code-block:: python
+
+        from pyrill.primitives import Limit
+        from pyrill.sources import IterableSource
+
+        source = IterableSource(source=[1, 2, 3, 4, 5])
+        stage = source >> Limit[int](count=2)
+
+        await stage.mount()
+        frames = [frame async for frame in stage]
+        # [1, 2]
+    """
+
+    def __init__(self, *args: Any, count: int = 0, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self._count = count
+        self._counter = 0
+
+    async def _mount(self) -> None:
+        self._counter = 0
+        return await super()._mount()
+
+    async def _unmount(self) -> None:
+        self._counter = 0
+        return await super()._unmount()
+
+    async def _next_frame(self) -> Source_co:
+        if self._counter >= self._count:
+            raise StopAsyncIteration()
+        self._counter += 1
+        return await super()._next_frame()
 
 
 async def shielded_push[Source_co](
