@@ -1216,10 +1216,10 @@ class BaseDecoupledStage[Sink_co, Source_co](BaseStage[Sink_co, Source_co], ABC)
 
     async def _next_frame(self) -> Source_co:
         self._ensure_consumer()
-        return await self._decoupled_next_frame()
+        return await self._process_frame(await self._decoupled_next_frame())
 
     @abstractmethod
-    async def _decoupled_next_frame(self) -> Source_co:
+    async def _decoupled_next_frame(self) -> Sink_co:
         raise NotImplementedError()
 
     async def wait_until_finish_consumer(self) -> None:

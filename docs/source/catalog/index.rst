@@ -21,5 +21,6 @@ Elements catalog
     json
     io
     queues
+    futures
     time
     debug
