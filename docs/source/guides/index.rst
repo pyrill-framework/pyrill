@@ -12,6 +12,7 @@ and change it.
     parsing-and-converting
     branching-and-merging
     timing-and-flow
+    concurrent-tasks
     custom-elements
     errors-and-retries
     messages-and-monitoring
@@ -34,6 +35,10 @@ and change it.
 
 :doc:`custom-elements`
     Write your own sources, stages and sinks, and package a chain of stages as one.
+
+:doc:`concurrent-tasks`
+    Schedule work for each frame, consume results as tasks finish, and limit
+    buffered futures.
 
 :doc:`errors-and-retries`
     Understand what happens when something fails, drop bad frames and retry.
