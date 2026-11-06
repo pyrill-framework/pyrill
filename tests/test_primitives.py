@@ -12,9 +12,11 @@ from pyrill.primitives import (
     Bin,
     Flat,
     Gate,
+    Limit,
     Noop,
     PrefixStream,
     Retry,
+    Skip,
     SkipIf,
     SuffixStream,
     Tee,
@@ -118,6 +120,158 @@ class TestSkipIf:
         result = [item async for item in stage]
 
         assert result == [1, 3, 5]
+
+
+# ---------------------------------------------------------------------------
+# TestSkip
+# ---------------------------------------------------------------------------
+
+
+class TestSkip:
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [(0, [1, 2, 3]), (1, [2, 3]), (2, [3]), (3, []), (5, [])],
+    )
+    async def test_iteration_skips_initial_frames(
+        self, count: int, expected: list[int]
+    ) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        stage: Skip[int] = source >> Skip[int](count=count)
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == expected
+        assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
+
+    async def test_default_count_passes_all_frames(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        stage: Skip[int] = source >> Skip[int]()
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == [1, 2, 3]
+        assert stage.state is ElementState.NULL
+
+    @pytest.mark.parametrize("count", [0, 1, 3])
+    async def test_empty_source_ends_iteration(self, count: int) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        stage: Skip[int] = source >> Skip[int](count=count)
+        await stage.mount()
+
+        with pytest.raises(StopAsyncIteration):
+            await anext(stage)
+
+        assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
+
+    async def test_anext_returns_first_frame_after_skipped_prefix(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[10, 20, 30, 40])
+        stage: Skip[int] = source >> Skip[int](count=2)
+        await stage.mount()
+        try:
+            result = await anext(stage)
+
+            assert result == 30
+            assert stage.state is ElementState.READY
+            assert source.state is ElementState.READY
+        finally:
+            await stage.unmount()
+
+    async def test_iteration_after_remount_skips_prefix_again(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        stage: Skip[int] = source >> Skip[int](count=1)
+        await stage.mount()
+        _ = [frame async for frame in stage]
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == [2, 3]
+        assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
+
+
+# ---------------------------------------------------------------------------
+# TestLimit
+# ---------------------------------------------------------------------------
+
+
+class TestLimit:
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [(0, []), (1, [1]), (2, [1, 2]), (3, [1, 2, 3]), (5, [1, 2, 3])],
+    )
+    async def test_iteration_emits_at_most_count_frames(
+        self, count: int, expected: list[int]
+    ) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        stage: Limit[int] = source >> Limit[int](count=count)
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == expected
+        assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
+
+    async def test_default_count_emits_no_frames(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        stage: Limit[int] = source >> Limit[int]()
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == []
+        assert stage.state is ElementState.NULL
+
+    @pytest.mark.parametrize("count", [0, 1, 3])
+    async def test_empty_source_ends_iteration(self, count: int) -> None:
+        source: IterableSource[int] = IterableSource(source=[])
+        stage: Limit[int] = source >> Limit[int](count=count)
+        await stage.mount()
+
+        with pytest.raises(StopAsyncIteration):
+            await anext(stage)
+
+        assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
+
+    @pytest.mark.parametrize("count", [0, 1, 2])
+    async def test_iteration_does_not_consume_frames_beyond_limit(
+        self, count: int
+    ) -> None:
+        consumed: list[int] = []
+
+        def frames() -> Iterator[int]:
+            for frame in range(5):
+                consumed.append(frame)
+                yield frame
+
+        source: IterableSource[int] = IterableSource(source=frames())
+        stage: Limit[int] = source >> Limit[int](count=count)
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == list(range(count))
+        assert consumed == list(range(count))
+        assert stage.state is ElementState.NULL
+
+    async def test_iteration_after_remount_resets_limit(self) -> None:
+        source: IterableSource[int] = IterableSource(source=[1, 2, 3])
+        stage: Limit[int] = source >> Limit[int](count=2)
+        await stage.mount()
+        _ = [frame async for frame in stage]
+        await stage.mount()
+
+        result = [frame async for frame in stage]
+
+        assert result == [1, 2]
+        assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
 
 
 # ---------------------------------------------------------------------------
