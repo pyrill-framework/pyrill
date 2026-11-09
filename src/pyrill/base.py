@@ -535,8 +535,8 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
             raise StopAsyncIteration()
         async with self._consumer_lock:
             try:
+                self._ensure_ready()
                 self._consumer_task = current_task()
-                await self._ensure_ready()
 
                 try:
                     while True:
@@ -566,7 +566,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
             finally:
                 self._consumer_task = None
 
-    async def _ensure_ready(self) -> None:
+    def _ensure_ready(self) -> None:
         if self._state is ElementState.READY:
             return
         raise RuntimeError("Element is not ready")
@@ -928,8 +928,8 @@ class BaseSource[Source_co](BaseProducer[Source_co], ABC):
         await super()._unmount()
         self._initiated = False
 
-    async def _ensure_ready(self) -> None:
-        await super()._ensure_ready()
+    def _ensure_ready(self) -> None:
+        super()._ensure_ready()
 
         if self._initiated is True:
             return
@@ -1235,11 +1235,14 @@ class BaseDecoupledStage[Sink_co, Source_co](BaseStage[Sink_co, Source_co], ABC)
         await super()._mount()
         self._ensure_consumer()
 
-    async def _unmount(self) -> None:
+    async def _stop_consumer(self) -> None:
         consumer_fut = self._consumer_fut
         if consumer_fut is not None and consumer_fut is not current_task():
             consumer_fut.cancel()
             # wait() does not re-raise the consumer's own cancellation
             await wait([consumer_fut])
+
+    async def _unmount(self) -> None:
+        await self._stop_consumer()
 
         await super()._unmount()
