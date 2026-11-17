@@ -376,11 +376,10 @@ class FutureSource[Source_co](BaseSource[Source_co]):
         self._fut: Future[Source_co | BaseException] | None = None
         self._fut_set_event = Event()
 
-    async def _ensure_ready(self) -> None:
-        if self._state is ElementState.NULL:
+    async def __anext__(self) -> Source_co:
+        if self.state is ElementState.NULL and not self._closed:
             await self.mount()
-
-        await super()._ensure_ready()
+        return await super().__anext__()
 
     async def _next_frame(self) -> Source_co:
         if self._fut is None:

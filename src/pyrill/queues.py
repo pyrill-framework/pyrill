@@ -35,6 +35,11 @@ class BaseQueue[Source_co](BaseProducer[Source_co], ABC):
         self._queue_size = queue_size
         self._open_queue = False
 
+    def count(self) -> int:
+        self._ensure_ready()
+        assert self._queue is not None
+        return self._queue.qsize()
+
     async def _mount(self) -> None:
         self._queue = AsyncQueue(maxsize=self._queue_size)
         self._open_queue = True

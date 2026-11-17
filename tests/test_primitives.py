@@ -11,6 +11,7 @@ from pyrill.primitives import (
     BaseBin,
     Bin,
     Flat,
+    FutureSource,
     Gate,
     Limit,
     Noop,
@@ -271,6 +272,40 @@ class TestLimit:
 
         assert result == [1, 2]
         assert stage.state is ElementState.NULL
+        assert source.state is ElementState.NULL
+
+
+# ---------------------------------------------------------------------------
+# TestFutureSource
+# ---------------------------------------------------------------------------
+
+
+class TestFutureSource:
+    async def test_first_read_mounts_source_and_receives_frame(self) -> None:
+        source: FutureSource[int] = FutureSource()
+        feeder = asyncio.create_task(source.feed(42))
+        try:
+            result = await asyncio.wait_for(anext(source), timeout=1)
+
+            assert result == 42
+            assert source.state is ElementState.READY
+            await feeder
+        finally:
+            feeder.cancel()
+            with suppress(asyncio.CancelledError):
+                await feeder
+            await source.unmount()
+
+    async def test_read_after_end_does_not_remount_source(self) -> None:
+        source: FutureSource[int] = FutureSource()
+        feeder = asyncio.create_task(source.feed(StopAsyncIteration()))
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(source), timeout=1)
+        await feeder
+
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(anext(source), timeout=1)
+
         assert source.state is ElementState.NULL
 
 

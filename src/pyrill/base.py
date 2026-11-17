@@ -11,12 +11,13 @@ from asyncio import (
     get_running_loop,
     wait,
 )
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from contextlib import suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 from enum import StrEnum
 from logging import Logger, LoggerAdapter, getLogger
+from types import TracebackType
 from typing import Any, Protocol, Self, TypeVar, cast, get_args
 from uuid import uuid4
 from weakref import ref
@@ -482,6 +483,35 @@ class BaseElement(MessageBrokerMixin, ABC):
             raise
 
 
+class PressureCtx:
+    def __init__(self, elem: BaseProducer[Any]) -> None:
+        self.elem = elem
+
+    def __enter__(self) -> Self:
+        self.elem._pressure = True  # pyright: ignore[reportPrivateUsage]
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.elem._pressure = False  # pyright: ignore[reportPrivateUsage]
+
+
+def active_pressure[T: Callable[..., Awaitable[Any]]](func: T) -> T:
+    """
+    Decorate an asynchronous method to activate pressure while it runs.
+    """
+
+    async def inner(self: BaseProducer[Any], *args: Any, **kwargs: Any) -> Any:
+        with PressureCtx(self):
+            return await func(self, *args, **kwargs)
+
+    return cast(T, inner)
+
+
 class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
     """
     Base class of every element that produces frames and can be read as an async iterator.
@@ -523,6 +553,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
     """
 
     _consumer_task: Task[Any] | None = None
+    _pressure: bool = False
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
@@ -530,13 +561,21 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
         self._consumer_lock = Lock()
         self._closed = False
 
+    @property
+    def pressure(self) -> bool:
+        """
+        Whether a pressure context is currently active for this element.
+        """
+        return self._pressure
+
+    @active_pressure
     async def __anext__(self) -> Source_co:
         if self._closed:
             raise StopAsyncIteration()
         async with self._consumer_lock:
             try:
+                self._ensure_ready()
                 self._consumer_task = current_task()
-                await self._ensure_ready()
 
                 try:
                     while True:
@@ -566,7 +605,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
             finally:
                 self._consumer_task = None
 
-    async def _ensure_ready(self) -> None:
+    def _ensure_ready(self) -> None:
         if self._state is ElementState.READY:
             return
         raise RuntimeError("Element is not ready")
@@ -580,6 +619,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
 
     async def _unmount(self) -> None:
         self._closed = True
+        self._pressure = False
         if (
             self._consumer_task is not None
             and self._consumer_task is not current_task()
@@ -591,6 +631,7 @@ class BaseProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC):
 
     async def _mount(self) -> None:
         self._closed = False
+        self._pressure = False
         await super()._mount()
 
     def get_product_type(self) -> type[Source_co]:
@@ -662,18 +703,28 @@ class BaseParallelProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC
         self._running_fut = None
         self._event = Event()
 
+    @property
+    def pressure(self) -> bool:
+        return self._event.is_set()
+
     async def __anext__(self) -> Source_co:
+        if self.state is ElementState.ERROR:
+            raise RuntimeError("Element has an error")
         fut = Future[Source_co]()
         self._futs.add(fut)
         self._event.set()
-        fut.add_done_callback(lambda f: self._discard_fut(f))
         self._ensure_running()
-        return await fut
+        try:
+            return await fut
+        finally:
+            self._discard_fut(fut)
 
     def _discard_fut(self, fut: Future[Source_co]) -> None:
         self._futs.discard(fut)
-        if not self._futs and self._running_fut is not None:
-            self._running_fut.cancel()
+        if not self._futs:
+            self._event.clear()
+            if self._running_fut is not None:
+                self._running_fut.cancel()
 
     def _ensure_running(self) -> None:
         if self._running_fut is not None:
@@ -684,15 +735,28 @@ class BaseParallelProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC
         def running_done_callback(f: Future[None]) -> None:
             if self._running_fut is f:
                 self._running_fut = None
+                # A request may arrive while the previous worker is stopping.
+                if self._futs and self.state is not ElementState.ERROR:
+                    self._ensure_running()
 
         self._running_fut.add_done_callback(running_done_callback)
 
     async def _get_next_fut(self) -> Future[Source_co]:
-        while not self._futs:
+        while True:
+            while self._futs:
+                fut = self._futs.pop()
+                if not self._futs:
+                    self._event.clear()
+                if not fut.done():
+                    return fut
             self._event.clear()
             await self._event.wait()
 
-        return self._futs.pop()
+    def _take_waiting_readers(self) -> set[Future[Source_co]]:
+        readers = self._futs
+        self._futs = set()
+        self._event.clear()
+        return readers
 
     async def _run(self) -> None:
         while self._futs:
@@ -707,10 +771,11 @@ class BaseParallelProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC
                 fut.set_result(frame)
             except StopAsyncIteration as ex:
                 self._logger.debug("Stream finished")
-                if self._futs:
-                    while fut := self._futs.pop():
-                        fut.set_exception(ex)
+                readers = self._take_waiting_readers()
                 await self.unmount()
+                for fut in readers:
+                    if not fut.done():
+                        fut.set_exception(ex)
                 return
             except FrameSkipped as ex:
                 self._send_message(
@@ -718,16 +783,28 @@ class BaseParallelProducer[Source_co](AsyncIterator[Source_co], BaseElement, ABC
                 )
                 continue
             except Exception as ex:  # noqa: BLE001
+                # Detach readers before cleanup, which otherwise cancels them
+                # and replaces the original failure with CancelledError.
+                readers = self._take_waiting_readers()
                 await self._set_error(ex)
+                for fut in readers:
+                    if not fut.done():
+                        fut.set_exception(ex)
+                return
 
     @abstractmethod
     async def _next_frame(self) -> Source_co:  # pragma: nocover
         raise NotImplementedError()
 
     async def _unmount(self) -> None:
-        for task in self._futs:
-            if not task.done() and task != current_task():
-                task.cancel("Unmounted element")
+        for fut in self._take_waiting_readers():
+            if not fut.done():
+                fut.cancel("Unmounted element")
+
+        running = self._running_fut
+        if running is not None and running is not current_task():
+            running.cancel()
+            await wait([running])
 
         await super()._unmount()
 
@@ -928,8 +1005,8 @@ class BaseSource[Source_co](BaseProducer[Source_co], ABC):
         await super()._unmount()
         self._initiated = False
 
-    async def _ensure_ready(self) -> None:
-        await super()._ensure_ready()
+    def _ensure_ready(self) -> None:
+        super()._ensure_ready()
 
         if self._initiated is True:
             return
@@ -1235,11 +1312,14 @@ class BaseDecoupledStage[Sink_co, Source_co](BaseStage[Sink_co, Source_co], ABC)
         await super()._mount()
         self._ensure_consumer()
 
-    async def _unmount(self) -> None:
+    async def _stop_consumer(self) -> None:
         consumer_fut = self._consumer_fut
         if consumer_fut is not None and consumer_fut is not current_task():
             consumer_fut.cancel()
             # wait() does not re-raise the consumer's own cancellation
             await wait([consumer_fut])
+
+    async def _unmount(self) -> None:
+        await self._stop_consumer()
 
         await super()._unmount()

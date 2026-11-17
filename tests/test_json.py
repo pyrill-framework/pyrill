@@ -44,8 +44,8 @@ class TestFromJsonMixin:
 
     def test_custom_decoder_is_used(self) -> None:
         class UpperDecoder(json.JSONDecoder):
-            def decode(self, s: str, **kwargs: Any) -> Any:
-                return super().decode(s, **kwargs).upper()
+            def decode(self, s: str, *args: Any, **kwargs: Any) -> Any:
+                return super().decode(s, *args, **kwargs).upper()
 
         decoder = FromJsonMixin(json_decoder_cls=UpperDecoder)
 

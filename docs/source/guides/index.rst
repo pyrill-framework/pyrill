@@ -13,6 +13,7 @@ and change it.
     branching-and-merging
     timing-and-flow
     concurrent-tasks
+    windowing
     custom-elements
     errors-and-retries
     messages-and-monitoring
@@ -39,6 +40,10 @@ and change it.
 :doc:`concurrent-tasks`
     Schedule work for each frame, consume results as tasks finish, and limit
     buffered futures.
+
+:doc:`windowing`
+    Partition frames by size, time, or key, calculate per-window totals, and
+    monitor skipped frames while consuming producers through sinks.
 
 :doc:`errors-and-retries`
     Understand what happens when something fails, drop bad frames and retry.

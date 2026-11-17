@@ -1,5 +1,8 @@
 import asyncio
+import subprocess
+import sys
 from contextlib import suppress
+from textwrap import dedent
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +23,8 @@ from pyrill.base import (
     FrameSkipped,
     Message,
     Pipeline,
+    PressureCtx,
+    active_pressure,
 )
 
 # ---------------------------------------------------------------------------
@@ -64,6 +69,24 @@ class SkippingProducer(BaseProducer[int]):
         if self._calls == 1:
             raise FrameSkipped(frame=0)
         return 42
+
+
+class PressureProducer(BaseProducer[int]):
+    """Producer whose reads wait for a frame supplied by the test."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.frames: asyncio.Queue[int | BaseException] = asyncio.Queue()
+        self.reading = asyncio.Event()
+        self.observed_pressure: list[bool] = []
+
+    async def _next_frame(self) -> int:
+        self.observed_pressure.append(self.pressure)
+        self.reading.set()
+        frame = await self.frames.get()
+        if isinstance(frame, BaseException):
+            raise frame
+        return frame
 
 
 class ConcreteSink(BaseSink[int]):
@@ -111,6 +134,37 @@ class ConcreteParallelProducer(BaseParallelProducer[int]):
             return next(self._test_frames)
         except StopIteration:
             raise StopAsyncIteration()
+
+
+class ControlledParallelProducer(BaseParallelProducer[int]):
+    """Parallel producer with observable, explicitly released frame reads."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.frames: asyncio.Queue[int | BaseException] = asyncio.Queue()
+        self.reading = asyncio.Event()
+        self.interrupted = asyncio.Event()
+        self.calls = 0
+        self.active_reads = 0
+        self.max_active_reads = 0
+        self.observed_pressure: list[bool] = []
+
+    async def _next_frame(self) -> int:
+        self.calls += 1
+        self.active_reads += 1
+        self.max_active_reads = max(self.max_active_reads, self.active_reads)
+        self.observed_pressure.append(self.pressure)
+        self.reading.set()
+        try:
+            frame = await self.frames.get()
+            if isinstance(frame, BaseException):
+                raise frame
+            return frame
+        except asyncio.CancelledError:
+            self.interrupted.set()
+            raise
+        finally:
+            self.active_reads -= 1
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +720,243 @@ class TestBaseElementMessageCallbacks:
 # ---------------------------------------------------------------------------
 
 
+class TestPressureCtx:
+    def test_enter_sets_pressure_and_returns_context(self) -> None:
+        producer = ConcreteProducer([])
+        context = PressureCtx(producer)
+
+        with context as result:
+            assert result is context
+            assert result.elem is producer
+            assert producer.pressure is True
+
+    def test_exit_clears_pressure(self) -> None:
+        producer = ConcreteProducer([])
+
+        with PressureCtx(producer):
+            pass
+
+        assert producer.pressure is False
+        assert producer.state is ElementState.NULL
+
+    @pytest.mark.parametrize(
+        "error", [ValueError("failed"), FrameSkipped(7), asyncio.CancelledError()]
+    )
+    def test_exception_propagates_and_clears_pressure(
+        self, error: BaseException
+    ) -> None:
+        producer = ConcreteProducer([])
+
+        with pytest.raises(type(error)) as caught, PressureCtx(producer):
+            raise error
+
+        assert caught.value is error
+        assert producer.pressure is False
+
+
+class TestActivePressure:
+    async def test_call_forwards_arguments_and_returns_result(self) -> None:
+        producer = ConcreteProducer([])
+        observed: list[tuple[BaseProducer[int], int, str, bool]] = []
+
+        @active_pressure
+        async def operation(
+            subject: BaseProducer[int], value: int, *, suffix: str
+        ) -> str:
+            observed.append((subject, value, suffix, subject.pressure))
+            return f"{value}{suffix}"
+
+        result = await operation(producer, 42, suffix="!")
+
+        assert result == "42!"
+        assert observed == [(producer, 42, "!", True)]
+        assert producer.pressure is False
+
+    async def test_pressure_stays_active_across_await(self) -> None:
+        producer = ConcreteProducer([])
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        observed: list[bool] = []
+
+        @active_pressure
+        async def operation(subject: BaseProducer[int]) -> None:
+            entered.set()
+            await release.wait()
+            observed.append(subject.pressure)
+
+        task = asyncio.create_task(operation(producer))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=1)
+
+            assert producer.pressure is True
+            assert not task.done()
+            release.set()
+            await asyncio.wait_for(task, timeout=1)
+            assert observed == [True]
+            assert producer.pressure is False
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.parametrize("error", [ValueError("failed"), FrameSkipped(7)])
+    async def test_exception_propagates_and_clears_pressure(
+        self, error: BaseException
+    ) -> None:
+        producer = ConcreteProducer([])
+
+        @active_pressure
+        async def operation(subject: BaseProducer[int]) -> None:
+            assert subject.pressure is True
+            raise error
+
+        with pytest.raises(type(error)) as caught:
+            await operation(producer)
+
+        assert caught.value is error
+        assert producer.pressure is False
+
+    async def test_cancelled_operation_clears_pressure(self) -> None:
+        producer = ConcreteProducer([])
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        @active_pressure
+        async def operation(subject: BaseProducer[int]) -> None:
+            entered.set()
+            await release.wait()
+
+        task = asyncio.create_task(operation(producer))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert task.cancelled()
+        assert producer.pressure is False
+
+
 class TestBaseProducer:
+    def test_pressure_is_initially_false(self) -> None:
+        producer = ConcreteProducer([])
+
+        assert producer.pressure is False
+
+    async def test_pressure_is_active_while_read_waits(self) -> None:
+        producer = PressureProducer()
+        await producer.mount()
+        task = asyncio.create_task(anext(producer))
+        try:
+            await asyncio.wait_for(producer.reading.wait(), timeout=1)
+
+            assert producer.pressure is True
+            assert producer.observed_pressure == [True]
+            assert not task.done()
+            assert producer.state is ElementState.READY
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            await producer.unmount()
+
+    async def test_successful_read_clears_pressure(self) -> None:
+        producer = PressureProducer()
+        await producer.mount()
+        producer.frames.put_nowait(42)
+        try:
+            result = await anext(producer)
+
+            assert result == 42
+            assert producer.observed_pressure == [True]
+            assert producer.pressure is False
+            assert producer.state is ElementState.READY
+        finally:
+            await producer.unmount()
+
+    @pytest.mark.parametrize("error", [StopAsyncIteration(), ValueError("failed")])
+    async def test_failed_read_clears_pressure(self, error: Exception) -> None:
+        producer = PressureProducer()
+        await producer.mount()
+        producer.frames.put_nowait(error)
+
+        with pytest.raises(type(error)) as caught:
+            await anext(producer)
+
+        assert caught.value is error
+        assert producer.observed_pressure == [True]
+        assert producer.pressure is False
+        assert producer.state is (
+            ElementState.NULL
+            if isinstance(error, StopAsyncIteration)
+            else ElementState.ERROR
+        )
+
+    async def test_read_without_mount_leaves_pressure_false(self) -> None:
+        producer = ConcreteProducer([1])
+
+        with pytest.raises(RuntimeError, match="Element is not ready"):
+            await anext(producer)
+
+        assert producer.pressure is False
+        assert producer.state is ElementState.NULL
+
+    async def test_skipped_frame_keeps_pressure_active_until_read_completes(
+        self,
+    ) -> None:
+        producer = PressureProducer()
+        await producer.mount()
+        producer.frames.put_nowait(FrameSkipped(0))
+        producer.frames.put_nowait(42)
+        try:
+            result = await anext(producer)
+
+            assert result == 42
+            assert producer.observed_pressure == [True, True]
+            assert producer.pressure is False
+            assert producer.state is ElementState.READY
+        finally:
+            await producer.unmount()
+
+    async def test_cancelled_read_clears_pressure(self) -> None:
+        producer = PressureProducer()
+        await producer.mount()
+        task = asyncio.create_task(anext(producer))
+        await asyncio.wait_for(producer.reading.wait(), timeout=1)
+        try:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            assert task.cancelled()
+            assert producer.pressure is False
+            assert producer.state is ElementState.READY
+        finally:
+            await producer.unmount()
+
+    async def test_unmount_clears_pressure_and_cancels_pending_read(self) -> None:
+        producer = PressureProducer()
+        await producer.mount()
+        task = asyncio.create_task(anext(producer))
+        await asyncio.wait_for(producer.reading.wait(), timeout=1)
+
+        await producer.unmount()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+        assert producer.pressure is False
+        assert producer.state is ElementState.NULL
+
+    async def test_mount_clears_pressure(self) -> None:
+        producer = ConcreteProducer([])
+        with PressureCtx(producer):
+            await producer.mount()
+
+            assert producer.pressure is False
+            assert producer.state is ElementState.READY
+        await producer.unmount()
+
     async def test_anext_returns_first_frame_when_ready(self) -> None:
         # Arrange
         producer = ConcreteProducer([42, 99])
@@ -947,6 +1237,258 @@ class TestBaseConsumerOperators:
 
 
 class TestBaseParallelProducer:
+    def test_pressure_is_initially_false(self) -> None:
+        producer = ConcreteParallelProducer([])
+
+        assert producer.pressure is False
+        assert producer.state is ElementState.NULL
+
+    @pytest.mark.parametrize("reader_count", [1, 3, 5])
+    async def test_concurrent_readers_receive_each_frame_once(
+        self, reader_count: int
+    ) -> None:
+        frames = list(range(reader_count))
+        producer = ConcreteParallelProducer(frames)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.gather(*(anext(producer) for _ in frames)), timeout=1
+            )
+
+            # Waiting readers are held in a set; assignment order is unspecified.
+            assert sorted(result) == frames
+            assert producer.state is ElementState.READY
+        finally:
+            await producer.unmount()
+
+    async def test_concurrent_readers_share_one_frame_reader(self) -> None:
+        producer = ControlledParallelProducer()
+        for frame in [10, 20, 30]:
+            producer.frames.put_nowait(frame)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.gather(*(anext(producer) for _ in range(3))), timeout=1
+            )
+
+            assert sorted(result) == [10, 20, 30]
+            assert producer.calls == 3
+            assert producer.max_active_reads == 1
+            assert producer.active_reads == 0
+            assert producer.observed_pressure == [True, True, True]
+        finally:
+            await producer.unmount()
+
+    async def test_read_does_not_fetch_unrequested_frame(self) -> None:
+        producer = ControlledParallelProducer()
+        producer.frames.put_nowait(42)
+        producer.frames.put_nowait(99)
+        try:
+            result = await asyncio.wait_for(anext(producer), timeout=1)
+
+            assert result == 42
+            assert producer.calls == 1
+            assert producer.frames.qsize() == 1
+            assert producer.active_reads == 0
+        finally:
+            await producer.unmount()
+
+    async def test_pressure_is_active_while_read_waits(self) -> None:
+        producer = ControlledParallelProducer()
+        task = asyncio.create_task(anext(producer))
+        try:
+            await asyncio.wait_for(producer.reading.wait(), timeout=1)
+
+            assert producer.pressure is True
+            assert producer.observed_pressure == [True]
+            assert not task.done()
+            assert producer.state is ElementState.READY
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            await producer.unmount()
+
+    async def test_successful_read_clears_pressure_when_no_readers_remain(self) -> None:
+        producer = ControlledParallelProducer()
+        producer.frames.put_nowait(42)
+        try:
+            result = await asyncio.wait_for(anext(producer), timeout=1)
+
+            assert result == 42
+            assert producer.pressure is False
+            assert producer.state is ElementState.READY
+        finally:
+            await producer.unmount()
+
+    @pytest.mark.parametrize("reader_count", [1, 3])
+    async def test_exhaustion_finishes_all_waiting_readers_and_unmounts(
+        self, reader_count: int
+    ) -> None:
+        producer = ConcreteParallelProducer([])
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(
+                    *(anext(producer) for _ in range(reader_count)),
+                    return_exceptions=True,
+                ),
+                timeout=1,
+            )
+
+            assert len(results) == reader_count
+            assert all(isinstance(result, StopAsyncIteration) for result in results)
+            assert producer.state is ElementState.NULL
+            assert producer.pressure is False
+        finally:
+            await producer.unmount()
+
+    async def test_skipped_frame_emits_message_and_keeps_reader_waiting(self) -> None:
+        producer = ControlledParallelProducer()
+        producer.frames.put_nowait(FrameSkipped(0))
+        producer.frames.put_nowait(42)
+        received: list[Message] = []
+        producer.add_message_callback(
+            lambda _, message: received.append(message), MSG_FRAME_SKIPPED
+        )
+        try:
+            result = await asyncio.wait_for(anext(producer), timeout=1)
+
+            assert result == 42
+            assert producer.calls == 2
+            assert producer.observed_pressure == [True, True]
+            assert [message.params for message in received] == [{"frame": 0}]
+            assert producer.state is ElementState.READY
+        finally:
+            await producer.unmount()
+
+    async def test_cancelling_one_reader_keeps_other_reader_active(self) -> None:
+        producer = ControlledParallelProducer()
+        cancelled = asyncio.create_task(anext(producer))
+        remaining = asyncio.create_task(anext(producer))
+        await asyncio.wait_for(producer.reading.wait(), timeout=1)
+        try:
+            cancelled.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled
+
+            assert cancelled.cancelled()
+            assert not remaining.done()
+            assert producer.pressure is True
+            assert not producer.interrupted.is_set()
+            assert producer.state is ElementState.READY
+        finally:
+            remaining.cancel()
+            await asyncio.gather(cancelled, remaining, return_exceptions=True)
+            await producer.unmount()
+
+    async def test_cancelling_last_reader_stops_frame_read_and_clears_pressure(
+        self,
+    ) -> None:
+        producer = ControlledParallelProducer()
+        task = asyncio.create_task(anext(producer))
+        await asyncio.wait_for(producer.reading.wait(), timeout=1)
+        try:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            await asyncio.wait_for(producer.interrupted.wait(), timeout=1)
+
+            assert task.cancelled()
+            assert producer.active_reads == 0
+            assert producer.pressure is False
+        finally:
+            await producer.unmount()
+
+    async def test_unmount_cancels_all_waiting_readers(self) -> None:
+        producer = ControlledParallelProducer()
+        tasks = [asyncio.create_task(anext(producer)) for _ in range(3)]
+        await asyncio.wait_for(producer.reading.wait(), timeout=1)
+
+        await producer.unmount()
+
+        await asyncio.gather(*tasks, return_exceptions=True)
+        assert all(task.cancelled() for task in tasks)
+        assert producer.state is ElementState.NULL
+        assert producer.pressure is False
+        assert producer.active_reads == 0
+        assert producer.interrupted.is_set()
+
+    @pytest.mark.parametrize("reader_count", [1, 3])
+    async def test_frame_error_reaches_all_waiting_readers(
+        self, reader_count: int
+    ) -> None:
+        producer = ControlledParallelProducer()
+        error = ValueError("frame failed")
+        producer.frames.put_nowait(error)
+
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                *(anext(producer) for _ in range(reader_count)),
+                return_exceptions=True,
+            ),
+            timeout=1,
+        )
+
+        assert len(results) == reader_count
+        assert all(result is error for result in results)
+        assert producer.state is ElementState.ERROR
+        assert producer.pressure is False
+        assert producer.calls == 1
+        assert producer.active_reads == 0
+
+    async def test_new_request_restarts_worker_after_last_reader_cancellation(
+        self,
+    ) -> None:
+        producer = ControlledParallelProducer()
+        first = asyncio.create_task(anext(producer))
+        await asyncio.wait_for(producer.reading.wait(), timeout=1)
+        first.cancel()
+        replacement = asyncio.create_task(anext(producer))
+        producer.frames.put_nowait(42)
+        try:
+            result = await asyncio.wait_for(replacement, timeout=1)
+
+            assert result == 42
+            assert first.cancelled()
+            assert producer.max_active_reads == 1
+            assert producer.pressure is False
+            assert producer.state is ElementState.READY
+        finally:
+            first.cancel()
+            replacement.cancel()
+            await asyncio.gather(first, replacement, return_exceptions=True)
+            await producer.unmount()
+
+    def test_frame_error_reaches_waiting_reader_without_stalling(self) -> None:
+        # Bound this scenario in another process: an error-loop regression can
+        # starve the event loop, preventing asyncio.wait_for from firing.
+        scenario = dedent(
+            """
+            import asyncio
+            from tests.test_base import ControlledParallelProducer
+
+            async def main() -> None:
+                producer = ControlledParallelProducer()
+                producer.frames.put_nowait(ValueError("frame failed"))
+                try:
+                    await anext(producer)
+                except ValueError as error:
+                    assert str(error) == "frame failed"
+                else:
+                    raise AssertionError("reader did not receive the frame error")
+
+            asyncio.run(main())
+            """
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", scenario],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+
     async def test_anext_returns_frame(self) -> None:
         # Arrange
         producer = ConcreteParallelProducer([42])
