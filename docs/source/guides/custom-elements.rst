@@ -297,6 +297,24 @@ method, subclass :class:`~pyrill.primitives.BaseBin` and implement
 ``_get_upstream_downstream``. :class:`~pyrill.primitives.Bin` takes the two ends as
 arguments, if you already have them.
 
+Show frame types in Sphinx
+--------------------------
+
+The :mod:`pyrill.sphinx` extension adds **Consumes** and **Produces** fields to
+autodoc class descriptions. Enable it in your project's ``conf.py``:
+
+.. code-block:: python
+
+    extensions = ["sphinx.ext.autodoc", "sphinx.ext.intersphinx", "pyrill.sphinx"]
+    intersphinx_mapping = {"python": ("https://docs.python.org/3/", None)}
+
+Then document an element with ``autoclass`` or ``automodule`` as usual. For
+example, a subclass of ``BaseStage[str, list[int]]`` is described as consuming
+``str`` and producing ``list[int]``.
+
+See :doc:`sphinx` for installation, complete examples, decorated stages, and
+links to classes and type aliases.
+
 Where to look next
 ------------------
 

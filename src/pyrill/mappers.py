@@ -1,5 +1,6 @@
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
+from functools import update_wrapper
 from inspect import Parameter, isawaitable, signature
 from typing import Any, Concatenate, Protocol, cast, overload
 
@@ -279,6 +280,8 @@ def make_map[Sink_co, Source_co, **Params](
             return cast(Callable[..., Awaitable[Source_co] | Source_co], func)(
                 frame, **self._kwargs
             )
+
+        update_wrapper(_map_frame, func)
 
     Mapper.__doc__ = func.__doc__
     Mapper.__module__ = func.__module__

@@ -15,6 +15,7 @@ and change it.
     concurrent-tasks
     windowing
     custom-elements
+    sphinx
     errors-and-retries
     messages-and-monitoring
 
@@ -36,6 +37,10 @@ and change it.
 
 :doc:`custom-elements`
     Write your own sources, stages and sinks, and package a chain of stages as one.
+
+:doc:`sphinx`
+    Show consumed and produced frame types in Sphinx, with links to their classes
+    and type aliases.
 
 :doc:`concurrent-tasks`
     Schedule work for each frame, consume results as tasks finish, and limit
