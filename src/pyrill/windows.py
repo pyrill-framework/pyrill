@@ -465,7 +465,7 @@ class GroupQueue[Source_co](QueueSource[Source_co]):
         return self._key
 
 
-class GroupBy[Source_co](BaseDecoupledStage[Source_co, BaseProducer[Source_co]], ABC):
+class GroupBy[Source_co](BaseDecoupledStage[Source_co, BaseProducer[Source_co]]):
     """
     Stage that routes frames with equal keys to the same group producer.
 
