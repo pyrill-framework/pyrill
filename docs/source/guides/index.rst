@@ -42,8 +42,8 @@ and change it.
     buffered futures.
 
 :doc:`windowing`
-    Group frames into fixed-size windows, calculate per-window totals, and
-    process batches through sinks.
+    Partition frames by size, time, or key, calculate per-window totals, and
+    monitor skipped frames while consuming producers through sinks.
 
 :doc:`errors-and-retries`
     Understand what happens when something fails, drop bad frames and retry.
