@@ -1,6 +1,6 @@
-=======
-Windows
-=======
+==================
+Windows and Groups
+==================
 
 Partition streams by frame count, elapsed time, or a grouping key. Each output
 is a producer that can be connected to its own sink.
